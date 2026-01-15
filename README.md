@@ -26,11 +26,11 @@ A GitHub Account.
 
 A Firebase Account (Google Cloud).
 
-A custom domain (optional, but recommended for Apple device compatibility).
+A custom domain (e.g., cardinalcomputersystems.com).
 
 2. Repository Structure
 
-index.html: The main application file (rename address-formatter.html to this).
+index.html: The main application file.
 
 CNAME: Contains your custom domain (e.g., apps.cardinalcomputersystems.com).
 
@@ -50,7 +50,11 @@ Enable Google.
 
 Enable Anonymous (for Guest mode).
 
-Important: Under Settings > Authorized domains, add your custom domain (e.g., apps.cardinalcomputersystems.com) and your GitHub Pages domain (username.github.io).
+Important: Under Settings > Authorized domains, add:
+
+apps.cardinalcomputersystems.com (Your App)
+
+auth.cardinalcomputersystems.com (Your Login Handler)
 
 Create Database:
 
@@ -76,11 +80,11 @@ service cloud.firestore {
 
 4. Code Configuration
 
-In index.html, locate the firebaseConfig object and ensure it matches your project settings:
+In index.html, locate the firebaseConfig object and ensure it uses your custom auth domain to fix Apple login issues:
 
 let firebaseConfig = {
     apiKey: "YOUR_API_KEY",
-    authDomain: "auth.cardinalcomputersystems.com", // Important for Apple devices
+    authDomain: "auth.cardinalcomputersystems.com", // CRITICAL for Apple/Safari support
     projectId: "cardinal-address",
     // ... other keys
 };
@@ -94,50 +98,54 @@ Enable Pages: Go to Settings > Pages.
 
 Source: Select Deploy from a branch (usually main).
 
-Custom Domain: Enter apps.cardinalcomputersystems.com (or your chosen subdomain).
+Custom Domain: Enter apps.cardinalcomputersystems.com.
 
-DNS Setup:
+DNS Setup (GoDaddy/Registrar):
 
-In your Domain Registrar (e.g., GoDaddy), create a CNAME record for apps pointing to [username].github.io.
+App: CNAME record apps pointing to [username].github.io.
 
-Apple Fix: Create a separate CNAME for auth pointing to [project-id].firebaseapp.com to handle secure logins on iOS.
+Login: CNAME record auth pointing to cardinal-address.firebaseapp.com.
 
-🔒 Security Notes
-
-Public API Keys: The Firebase API key visible in the code is safe to be public. It identifies your project but does not grant admin access.
-
-Data Isolation: Security is enforced by the Firestore Rules. Even if someone has your API key, they cannot read your private data without logging into your specific Google Account.
-
-PII: Personally Identifiable Information (Names/Addresses) is stored only in the user's private collection.
-
-📝 Usage
-
-Login: Sign in with your company Google Account.
-
-Input: Paste a list of addresses (one per line) into the text area.
-
-Process: Click Fetch & Format. The tool will query the MD database.
-
-Save: Click Save to Private DB to store the batch.
-
-History: Use the Saved Batches tab to reload previous work.
-
-Print: Click Print PDF for a clean hard copy.
-
-❓ Troubleshooting
+❓ Troubleshooting Login Errors
 
 Error 400: redirect_uri_mismatch
 
-If you see this error when logging in, you must authorize your custom auth domain in the Google Cloud Console.
+If you see this error, you need to whitelist your custom auth domain in the Google Cloud Console.
 
-Go to the Google Cloud Console Credentials Page.
+Step-by-Step Fix:
 
-Under "OAuth 2.0 Client IDs", click the name of your client (usually "Web client").
+Open Google Cloud Console:
+
+The easiest way: Go to Firebase Console -> Project Settings (Gear Icon) -> Users and permissions.
+
+Click the blue link "Advanced permission settings". This opens Google Cloud.
+
+Navigate to Credentials:
+
+Click the Hamburger Menu (three lines, top left).
+
+Hover over APIs & Services.
+
+Click Credentials.
+
+Edit Client:
+
+Look under the section "OAuth 2.0 Client IDs".
+
+Find the Web client (there may be more than one; check them all if unsure).
+
+Click the Pencil Icon (Edit) on the right.
+
+Add Redirect URI:
 
 Scroll down to "Authorized redirect URIs".
 
-Click "ADD URI".
+Click ADD URI.
 
-Paste: https://auth.cardinalcomputersystems.com/__/auth/handler
+Paste this EXACT link: https://auth.cardinalcomputersystems.com/__/auth/handler
+
+Save & Wait:
 
 Click Save.
+
+WAIT 5 MINUTES. Google servers take time to update globally.
