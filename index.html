@@ -92,12 +92,22 @@
                 document.getElementById('app-content').classList.remove('hidden');
                 document.getElementById('user-display').innerText = user.email || "Guest User";
                 
-                // Initialize Private Database Listener
-                initDatabaseListener(user.uid);
+                if (user.isAnonymous) {
+                    // Hide Database features for Guest
+                    document.getElementById('btn-tab-database').classList.add('hidden');
+                } else {
+                    // Show Database features for Auth User
+                    document.getElementById('btn-tab-database').classList.remove('hidden');
+                    // Initialize Private Database Listener
+                    initDatabaseListener(user.uid);
+                }
             } else {
                 window.currentUser = null;
                 // Unsubscribe from DB updates
                 if (window.dbUnsubscribe) window.dbUnsubscribe();
+                
+                // Hide save button and reset views
+                document.getElementById('btn-save-db').classList.add('hidden');
                 
                 document.getElementById('login-screen').classList.remove('hidden');
                 document.getElementById('app-content').classList.add('hidden');
@@ -598,7 +608,7 @@
             document.getElementById('progressContainer').classList.add('hidden');
             
             // Show Save Button
-            if (results.length > 0) {
+            if (results.length > 0 && !window.currentUser?.isAnonymous) {
                 document.getElementById('btn-save-db').classList.remove('hidden');
             }
         }
@@ -631,7 +641,7 @@
             });
             window.currentBatchData = results;
             renderResults(results, skipped, "CSV Processing");
-            if (results.length > 0) document.getElementById('btn-save-db').classList.remove('hidden');
+            if (results.length > 0 && !window.currentUser?.isAnonymous) document.getElementById('btn-save-db').classList.remove('hidden');
         }
 
         // --- RENDERER ---
