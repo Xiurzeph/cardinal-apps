@@ -11,10 +11,46 @@
         import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- FIREBASE CONFIG & INIT ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "demo-key", authDomain: "demo.firebaseapp.com", projectId: "demo-project" };
+        // =========================================================================
+        // --- [STEP 1] FIREBASE CONFIGURATION ---
+        // =========================================================================
         
+        let firebaseConfig = {
+            apiKey: "AIzaSyBtqk43KKems5IEDhFKDdeAsh2evAjIaek",
+            authDomain: "itech-restricted-funds.firebaseapp.com",
+            projectId: "itech-restricted-funds",
+            storageBucket: "itech-restricted-funds.firebasestorage.app",
+            messagingSenderId: "67669469828",
+            appId: "1:67669469828:web:08b91ad618bbfd7301f0d1"
+        };
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        // --- AUTOMATIC ENV DETECTION (Do not edit this part) ---
+        // This allows the app to work inside the AI preview AND on your real site.
+        if (typeof __firebase_config !== 'undefined') {
+            firebaseConfig = JSON.parse(__firebase_config);
+        }
+        // =========================================================================
+
+        // --- CONFIGURATION SAFETY CHECK ---
+        const isConfigured = firebaseConfig.apiKey && !firebaseConfig.apiKey.includes("PASTE_YOUR");
+        
+        if (!isConfigured) {
+            window.onload = () => {
+                document.body.innerHTML = `
+                    <div class="fixed inset-0 flex items-center justify-center bg-gray-900 text-white p-10 text-center">
+                        <div class="max-w-2xl">
+                            <h1 class="text-3xl font-bold text-red-500 mb-4">Configuration Missing</h1>
+                            <p class="text-lg mb-6">The application cannot connect to the database because it is missing your Firebase API keys.</p>
+                            <p class="text-gray-400">Please paste your config from the Firebase Console into the file.</p>
+                        </div>
+                    </div>
+                `;
+            }
+            throw new Error("Firebase Config Missing"); // Stop execution
+        }
+
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
@@ -64,8 +100,7 @@
                 await signInWithPopup(auth, provider);
             } catch (error) {
                 console.error("Login Failed", error);
-                alert("Login failed. Falling back to guest mode for preview.");
-                await signInAnonymously(auth);
+                alert(`Login failed: ${error.message}\n\nCheck your Firebase Console > Authentication > Sign-in method to ensure Google is enabled.`);
             }
         };
 
