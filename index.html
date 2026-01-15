@@ -148,6 +148,11 @@
 
         // READ (Listen to Private Path)
         function initDatabaseListener(userId) {
+            // Ensure we don't have duplicate listeners
+            if (window.dbUnsubscribe) {
+                window.dbUnsubscribe();
+            }
+
             // SECURITY UPDATE: Listen to specific user path
             const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
             
@@ -165,6 +170,17 @@
                 console.error("DB Listener Error:", error);
             });
         }
+
+        // Manual Refresh Action
+        window.refreshDatabase = () => {
+            if (window.currentUser) {
+                // Visual feedback
+                const tbody = document.getElementById('db-table-body');
+                if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-gray-400">Refreshing data...</td></tr>';
+                
+                initDatabaseListener(window.currentUser.uid);
+            }
+        };
 
         // DELETE (Private Path)
         window.deleteBatch = async (docId) => {
@@ -378,7 +394,10 @@
                 <div class="max-w-5xl mx-auto">
                     <div class="flex justify-between items-center mb-6">
                         <h2 class="text-xl font-bold text-slate-800">Your Private Batches</h2>
-                        <span class="text-sm text-gray-500 bg-white px-3 py-1 rounded shadow-sm border border-gray-200">Secure Path: /users/{uid}/data</span>
+                        <button onclick="window.refreshDatabase()" class="flex items-center gap-2 px-3 py-1 bg-white border border-gray-200 rounded shadow-sm text-sm text-gray-600 hover:text-red-700 hover:border-red-200 transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            Refresh Data
+                        </button>
                     </div>
 
                     <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
@@ -426,6 +445,11 @@
                     btn.classList.add('tab-inactive');
                 }
             });
+
+            // Auto-refresh when switching to database tab
+            if (tabName === 'database') {
+                window.refreshDatabase();
+            }
         };
 
         // Render DB Table
