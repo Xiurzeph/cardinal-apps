@@ -4,11 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cardinal Address Lookup</title>
+    <!-- Favicon -->
+    <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =========================================================================
@@ -43,7 +46,6 @@
                         <div class="max-w-2xl">
                             <h1 class="text-3xl font-bold text-red-500 mb-4">Configuration Missing</h1>
                             <p class="text-lg mb-6">The application cannot connect to the database because it is missing your Firebase API keys.</p>
-                            <p class="text-gray-400">Please paste your config from the Firebase Console into the file.</p>
                         </div>
                     </div>
                 `;
@@ -64,8 +66,17 @@
         
         async function initAuth() {
             try {
+                // 1. Check for Custom Token (Canvas Environment)
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
+                } 
+                // 2. Check for Redirect Result (Apple/Mobile Fallback)
+                else {
+                    try {
+                        await getRedirectResult(auth);
+                    } catch (e) {
+                        console.error("Redirect Result Error:", e);
+                    }
                 }
             } catch (e) {
                 console.error("Auth Init Error:", e);
@@ -96,16 +107,43 @@
         // Global Auth Functions
         window.googleLogin = async () => {
             const provider = new GoogleAuthProvider();
+            
             try {
+                // FIX FOR APPLE DEVICES: Force Local Persistence
+                // This helps bypass Safari's aggressive ITP (Intelligent Tracking Prevention)
+                await setPersistence(auth, browserLocalPersistence);
+                
+                // Try Popup first (Standard Desktop)
                 await signInWithPopup(auth, provider);
+                
             } catch (error) {
-                console.error("Login Failed", error);
-                alert(`Login failed: ${error.message}\n\nCheck your Firebase Console > Authentication > Sign-in method to ensure Google is enabled.`);
+                console.error("Popup Login Failed", error);
+                
+                // If Popup fails (often on iPhone), try Redirect
+                if (error.code === 'auth/popup-blocked' || error.message.includes('missing initial state')) {
+                    alert("Popup failed. Attempting redirect login...");
+                    try {
+                        await signInWithRedirect(auth, provider);
+                    } catch (redirectError) {
+                        alert("Login failed: " + redirectError.message);
+                    }
+                } else {
+                    alert(`Login failed: ${error.message}\n\nTip: On iPhone/Mac, try disabling 'Prevent Cross-Site Tracking' in Safari settings if this persists.`);
+                }
             }
         };
 
         window.guestLogin = async () => {
-            await signInAnonymously(auth);
+            try {
+                await signInAnonymously(auth);
+            } catch (error) {
+                console.error("Guest Login Failed", error);
+                if (error.code === 'auth/admin-restricted-operation') {
+                    alert("Guest login is disabled. Please enable 'Anonymous' in Firebase Console.");
+                } else {
+                    alert("Guest login failed: " + error.message);
+                }
+            }
         };
 
         window.logout = () => {
