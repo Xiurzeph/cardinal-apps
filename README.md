@@ -123,3 +123,21 @@ Save: Click Save to Private DB to store the batch.
 History: Use the Saved Batches tab to reload previous work.
 
 Print: Click Print PDF for a clean hard copy.
+
+❓ Troubleshooting
+
+Error 400: redirect_uri_mismatch
+
+If you see this error when logging in, you must authorize your custom auth domain in the Google Cloud Console.
+
+Go to the Google Cloud Console Credentials Page.
+
+Under "OAuth 2.0 Client IDs", click the name of your client (usually "Web client").
+
+Scroll down to "Authorized redirect URIs".
+
+Click "ADD URI".
+
+Paste: https://auth.cardinalcomputersystems.com/__/auth/handler
+
+Click Save.
