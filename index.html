@@ -12,7 +12,8 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // Added updateDoc to imports
+        import { getFirestore, collection, addDoc, updateDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =========================================================================
         // --- [STEP 1] FIREBASE CONFIGURATION ---
@@ -61,6 +62,7 @@
         window.currentUser = null;
         window.currentBatchData = null; // Store current results to save
         window.currentGroupStrikes = []; // Store strike status for groups
+        window.currentBatchId = null; // Track if we are editing an existing batch
         window.dbUnsubscribe = null; // To stop listening when logging out
 
         // --- AUTH LOGIC ---
@@ -115,8 +117,9 @@
                 // Unsubscribe from DB updates
                 if (window.dbUnsubscribe) window.dbUnsubscribe();
                 
-                // Hide save button and reset views
+                // Hide buttons and reset views
                 document.getElementById('btn-save-db').classList.add('hidden');
+                document.getElementById('btn-update-db').classList.add('hidden');
                 
                 document.getElementById('login-screen').classList.remove('hidden');
                 document.getElementById('app-content').classList.add('hidden');
@@ -171,7 +174,7 @@
 
         // --- DATABASE LOGIC (SECURE / PRIVATE) ---
 
-        // SAVE (Private Path)
+        // SAVE AS NEW (Private Path)
         window.saveBatchToDb = async () => {
             if (!window.currentUser) return;
             if (!window.currentBatchData || window.currentBatchData.length === 0) {
@@ -187,7 +190,7 @@
                 const userId = window.currentUser.uid;
                 const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
                 
-                await addDoc(colRef, {
+                const docRef = await addDoc(colRef, {
                     name: batchName,
                     timestamp: Date.now(),
                     createdBy: window.currentUser.email || "Guest",
@@ -196,11 +199,38 @@
                     groupStrikes: window.currentGroupStrikes || [] // Save strike status
                 });
                 
+                // Set as current batch so we can update it immediately if needed
+                window.currentBatchId = docRef.id;
+                document.getElementById('btn-update-db').classList.remove('hidden');
+                
                 alert("Batch saved securely to your private history!");
                 switchTab('database');
             } catch (e) {
                 console.error("Save Error:", e);
                 alert("Error saving to database: " + e.message);
+            }
+        };
+
+        // UPDATE EXISTING (Private Path)
+        window.updateBatchInDb = async () => {
+            if (!window.currentUser || !window.currentBatchId) return;
+            
+            try {
+                const userId = window.currentUser.uid;
+                const docRef = doc(db, 'artifacts', appId, 'users', userId, 'data_batches', window.currentBatchId);
+                
+                await updateDoc(docRef, {
+                    records: window.currentBatchData,
+                    recordCount: window.currentBatchData.length,
+                    groupStrikes: window.currentGroupStrikes || [],
+                    lastUpdated: Date.now()
+                });
+                
+                alert("Batch updated successfully!");
+                switchTab('database');
+            } catch (e) {
+                console.error("Update Error:", e);
+                alert("Error updating batch: " + e.message);
             }
         };
 
@@ -248,6 +278,12 @@
                 const userId = window.currentUser.uid;
                 const docRef = doc(db, 'artifacts', appId, 'users', userId, 'data_batches', docId);
                 await deleteDoc(docRef);
+                
+                // If we deleted the currently loaded batch, reset tracking
+                if (window.currentBatchId === docId) {
+                    window.currentBatchId = null;
+                    document.getElementById('btn-update-db').classList.add('hidden');
+                }
             } catch (e) {
                 alert("Delete failed: " + e.message);
             }
@@ -442,9 +478,14 @@
                         
                         <div class="flex-1"></div>
 
+                        <button id="btn-update-db" onclick="window.updateBatchInDb()" class="hidden px-5 py-2 bg-blue-700 text-white font-medium rounded hover:bg-blue-800 transition shadow-sm flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            Update Batch
+                        </button>
+
                         <button id="btn-save-db" onclick="window.saveBatchToDb()" class="hidden px-5 py-2 bg-emerald-700 text-white font-medium rounded hover:bg-emerald-800 transition shadow-sm flex items-center gap-2">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
-                            Save to Private DB
+                            Save as New
                         </button>
 
                         <button onclick="window.print()" class="px-5 py-2 bg-slate-800 text-white font-medium rounded hover:bg-slate-900 transition flex items-center gap-2">
@@ -566,10 +607,18 @@
             // Load data
             window.currentBatchData = batch.records;
             window.currentGroupStrikes = batch.groupStrikes || []; // Load saved strikes
+            window.currentBatchId = batch.id; // Set ID for update capability
+            
             renderResults(batch.records, 0, `Loaded: ${batch.name}`);
             
             // Switch tab
             switchTab('formatter');
+            
+            // Update button visibility
+            if (!window.currentUser?.isAnonymous) {
+                document.getElementById('btn-save-db').classList.remove('hidden');
+                document.getElementById('btn-update-db').classList.remove('hidden');
+            }
             
             // Show notification
             alert(`Loaded batch "${batch.name}" with ${batch.records.length} records.`);
@@ -611,6 +660,10 @@
         async function runLookupAndFormat() {
             const rawInput = document.getElementById('csvInput').value.trim();
             if (!rawInput) return alert("Please enter addresses.");
+            
+            // Reset current batch ID since this is a new search
+            window.currentBatchId = null;
+            document.getElementById('btn-update-db').classList.add('hidden');
             
             // Get Checkbox State
             const requireOwnerOccupied = document.getElementById('chkOwnerOccupied').checked;
@@ -698,6 +751,11 @@
         function processCSVData() {
             const rawData = document.getElementById('csvInput').value.trim();
             if (!rawData) return alert("Please enter CSV data.");
+            
+            // Reset current batch ID since this is a new process
+            window.currentBatchId = null;
+            document.getElementById('btn-update-db').classList.add('hidden');
+
             const lines = rawData.split('\n');
             let results = [];
             let skipped = 0;
