@@ -20,7 +20,7 @@
         
         let firebaseConfig = {
             apiKey: "AIzaSyBM6AeJvD0TpXc-ypHKCuRI7suQLAjcFbI",
-            authDomain: "cardinal-address.firebaseapp.com",
+            authDomain: "auth.cardinalcomputersystems.com",
             projectId: "cardinal-address",
             storageBucket: "cardinal-address.firebasestorage.app",
             messagingSenderId: "286969027972",
@@ -60,6 +60,7 @@
         // Global State for User
         window.currentUser = null;
         window.currentBatchData = null; // Store current results to save
+        window.currentGroupStrikes = []; // Store strike status for groups
         window.dbUnsubscribe = null; // To stop listening when logging out
 
         // --- AUTH LOGIC ---
@@ -73,9 +74,17 @@
                 // 2. Check for Redirect Result (Apple/Mobile Fallback)
                 else {
                     try {
-                        await getRedirectResult(auth);
+                        const result = await getRedirectResult(auth);
+                        // If we returned from a redirect login, 'result' will be the user credential
                     } catch (e) {
                         console.error("Redirect Result Error:", e);
+                        // ALERT USER: This captures "random" errors happening on page load
+                        // typically caused by DNS mismatch or Google Console config issues.
+                        if (e.code === 'auth/network-request-failed') {
+                            console.warn("Network error during auth check - likely DNS propagation issue with auth.cardinalcomputersystems.com");
+                        } else {
+                            // alert("Login Error: " + e.message); // Suppress generic errors on load
+                        }
                     }
                 }
             } catch (e) {
@@ -131,7 +140,7 @@
                 
                 // If Popup fails (often on iPhone), try Redirect
                 if (error.code === 'auth/popup-blocked' || error.message.includes('missing initial state')) {
-                    alert("Popup failed. Attempting redirect login...");
+                    // alert("Popup failed. Attempting redirect login..."); // Optional: reduce noise
                     try {
                         await signInWithRedirect(auth, provider);
                     } catch (redirectError) {
@@ -183,7 +192,8 @@
                     timestamp: Date.now(),
                     createdBy: window.currentUser.email || "Guest",
                     records: window.currentBatchData,
-                    recordCount: window.currentBatchData.length
+                    recordCount: window.currentBatchData.length,
+                    groupStrikes: window.currentGroupStrikes || [] // Save strike status
                 });
                 
                 alert("Batch saved securely to your private history!");
@@ -315,6 +325,15 @@
         .tab-inactive {
             color: #64748b; /* slate-500 */
         }
+
+        /* Strike Styles */
+        .group-struck table {
+            opacity: 0.5;
+        }
+        .group-struck td {
+            text-decoration: line-through;
+            color: #999;
+        }
     </style>
 </head>
 <body class="bg-gray-100 font-sans text-gray-800 h-screen flex flex-col">
@@ -387,6 +406,14 @@
                         </div>
                         <!-- Cardinal Red Focus Ring -->
                         <textarea id="csvInput" class="w-full h-32 p-3 border border-gray-300 rounded-md font-mono text-sm focus:ring-2 focus:ring-red-700 focus:border-red-700" placeholder="12345	Some Street	Extra Info&#10;100 Main Street"></textarea>
+                        
+                        <!-- NEW FILTER CHECKBOX -->
+                        <div class="mt-2 flex items-center">
+                            <input id="chkOwnerOccupied" type="checkbox" checked class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded">
+                            <label for="chkOwnerOccupied" class="ml-2 block text-sm text-gray-700">
+                                Require Owner-Occupied (Filter out rentals/businesses)
+                            </label>
+                        </div>
                     </div>
 
                     <!-- Progress Bar -->
@@ -538,6 +565,7 @@
             
             // Load data
             window.currentBatchData = batch.records;
+            window.currentGroupStrikes = batch.groupStrikes || []; // Load saved strikes
             renderResults(batch.records, 0, `Loaded: ${batch.name}`);
             
             // Switch tab
@@ -547,6 +575,35 @@
             alert(`Loaded batch "${batch.name}" with ${batch.records.length} records.`);
         };
 
+        // Function to toggle strike status
+        window.toggleGroupStrike = (groupIndex) => {
+            // Update state
+            const isStruck = !window.currentGroupStrikes[groupIndex];
+            window.currentGroupStrikes[groupIndex] = isStruck;
+            
+            // Update Group UI (Strikethrough text)
+            const groupDiv = document.getElementById(`group-div-${groupIndex}`);
+            if (groupDiv) {
+                if (isStruck) {
+                    groupDiv.classList.add('group-struck');
+                } else {
+                    groupDiv.classList.remove('group-struck');
+                }
+            }
+
+            // Update Button UI (Color/State)
+            const btn = document.getElementById(`strike-btn-${groupIndex}`);
+            if (btn) {
+                if (isStruck) {
+                    btn.className = 'p-1 rounded-md transition-colors no-print bg-red-100 text-red-700 shadow-sm';
+                    btn.title = "Restore Group";
+                } else {
+                    btn.className = 'p-1 rounded-md transition-colors no-print text-gray-400 hover:text-gray-600 hover:bg-gray-100';
+                    btn.title = "Strike Through Group";
+                }
+            }
+        };
+
 
         // --- FORMATTER LOGIC (Preserved) ---
         const API_URL = "https://geodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
@@ -554,6 +611,9 @@
         async function runLookupAndFormat() {
             const rawInput = document.getElementById('csvInput').value.trim();
             if (!rawInput) return alert("Please enter addresses.");
+            
+            // Get Checkbox State
+            const requireOwnerOccupied = document.getElementById('chkOwnerOccupied').checked;
 
             const lines = rawInput.split('\n').filter(l => l.trim().length > 0);
             const total = lines.length;
@@ -580,16 +640,35 @@
                     try {
                         const apiData = await fetchPropertyData(term);
                         if (apiData && apiData.features && apiData.features.length > 0) {
-                            const attr = apiData.features[0].attributes;
-                            if (attr.OOI === 'H') {
-                                const formattedRecord = formatApiRecord(attr);
+                            
+                            let targetAttr = null;
+
+                            // 1. If strict mode, find OOI='H'
+                            if (requireOwnerOccupied) {
+                                for (const feature of apiData.features) {
+                                    if (feature.attributes.OOI === 'H') {
+                                        targetAttr = feature.attributes;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                // 2. If relaxed mode, take the best match (first one usually)
+                                // We prefer H if available, otherwise take whatever
+                                const hMatch = apiData.features.find(f => f.attributes.OOI === 'H');
+                                targetAttr = hMatch ? hMatch.attributes : apiData.features[0].attributes;
+                            }
+                            
+                            if (targetAttr) {
+                                const formattedRecord = formatApiRecord(targetAttr);
                                 results.push(formattedRecord);
                                 foundMatch = true;
                                 break;
                             } else {
+                                // Found records, but filtered out by Strict Mode
+                                console.warn(`Found address ${term} but strict OOI check failed.`);
                                 skipped++;
                                 foundMatch = true;
-                                break;
+                                break; 
                             }
                         }
                     } catch (err) { console.error("API Error", err); }
@@ -604,6 +683,9 @@
 
             // Save to global for persistence
             window.currentBatchData = results;
+            // Initialize strike array
+            window.currentGroupStrikes = new Array(Math.ceil(results.length / 5)).fill(false);
+            
             renderResults(results, skipped, "API Lookup");
             document.getElementById('progressContainer').classList.add('hidden');
             
@@ -640,6 +722,8 @@
                 });
             });
             window.currentBatchData = results;
+            window.currentGroupStrikes = new Array(Math.ceil(results.length / 5)).fill(false);
+            
             renderResults(results, skipped, "CSV Processing");
             if (results.length > 0 && !window.currentUser?.isAnonymous) document.getElementById('btn-save-db').classList.remove('hidden');
         }
@@ -651,24 +735,71 @@
             canvas.innerHTML = '';
             
             if (data.length === 0) {
-                canvas.innerHTML = '<div class="text-center text-red-500 mt-10">No valid Owner-Occupied properties found.</div>';
+                canvas.innerHTML = '<div class="text-center text-red-500 mt-10">No valid properties found. Try unchecking "Require Owner-Occupied" if expected.</div>';
                 return;
             }
 
             const chunkSize = 5;
+            // Ensure strike array matches group count (handle legacy loads)
+            const numGroups = Math.ceil(data.length / chunkSize);
+            if (!window.currentGroupStrikes || window.currentGroupStrikes.length !== numGroups) {
+               // Preserve existing if possible, extend if needed, or init new
+               const newStrikes = new Array(numGroups).fill(false);
+               if(window.currentGroupStrikes) {
+                   window.currentGroupStrikes.forEach((val, i) => { if(i < newStrikes.length) newStrikes[i] = val; });
+               }
+               window.currentGroupStrikes = newStrikes;
+            }
+
             let groupCount = 0;
 
             for (let i = 0; i < data.length; i += chunkSize) {
-                groupCount++;
+                const groupIndex = groupCount; // 0-based index for array
+                groupCount++; // 1-based index for display
                 const group = data.slice(i, i + chunkSize);
                 
                 const groupDiv = document.createElement('div');
                 groupDiv.className = 'mb-8 break-inside-avoid';
+                groupDiv.id = `group-div-${groupIndex}`;
                 
+                const isStruck = window.currentGroupStrikes[groupIndex];
+
+                // Apply strike style if state is true
+                if (isStruck) {
+                    groupDiv.classList.add('group-struck');
+                }
+                
+                // Flex container for header and button
+                const headerContainer = document.createElement('div');
+                headerContainer.className = 'flex justify-between items-end border-b border-gray-300 pb-1 mb-2';
+
                 const header = document.createElement('h3');
-                header.className = 'text-sm font-bold text-gray-500 uppercase tracking-wide mb-2 border-b border-gray-300 pb-1';
+                header.className = 'text-sm font-bold text-gray-500 uppercase tracking-wide';
                 header.innerText = `Group ${groupCount}`;
-                groupDiv.appendChild(header);
+                
+                // Strike Button (Icon)
+                const actionBtn = document.createElement('button');
+                actionBtn.id = `strike-btn-${groupIndex}`;
+                actionBtn.onclick = () => window.toggleGroupStrike(groupIndex);
+                actionBtn.title = isStruck ? "Restore Group" : "Strike Through Group";
+                
+                // Conditional Styling based on state
+                if (isStruck) {
+                    actionBtn.className = 'p-1 rounded-md transition-colors no-print bg-red-100 text-red-700 shadow-sm';
+                } else {
+                    actionBtn.className = 'p-1 rounded-md transition-colors no-print text-gray-400 hover:text-gray-600 hover:bg-gray-100';
+                }
+
+                // Ban/Strike Icon
+                actionBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                `;
+
+                headerContainer.appendChild(header);
+                headerContainer.appendChild(actionBtn);
+                groupDiv.appendChild(headerContainer);
 
                 const table = document.createElement('table');
                 table.className = 'address-table';
@@ -694,6 +825,7 @@
         async function fetchPropertyData(cleanAddress) {
             const escaped = cleanAddress.replace(/'/g, "''");
             const params = new URLSearchParams({
+                // MODIFIED QUERY: Reverted STRICT filter. We now allow ALL results and filter in JS.
                 where: `UPPER(ADDRESS) LIKE UPPER('%${escaped}%') AND JURSCODE = 'PRIN'`,
                 outFields: 'ACCTID,ADDRESS,CITY,ZIPCODE,OWNNAME1,OOI',
                 returnGeometry: 'false',
@@ -709,9 +841,6 @@
             let text = rawLine.trim();
             
             // TAB DELIMITER FIX:
-            // Check if line contains tabs (e.g., from Excel or software copy/paste)
-            // Format: "12600\tAbercorn Pl\tDefault..."
-            // We want to combine Col 0 and Col 1 to make "12600 Abercorn Pl"
             if (text.includes('\t')) {
                 const parts = text.split('\t');
                 if (parts.length >= 2) {
@@ -722,13 +851,27 @@
             }
             
             text = text.toUpperCase();
+
+            // 1. Remove MD and Zip Code from end (e.g. " CLINTON MD 20735")
+            // Matches " MD" followed by optional zip, at the end of string
+            text = text.replace(/\s+MD(\s+\d{5}(-\d{4})?)?$/, '');
+
+            // 2. Standardize Directions
             const directions = {'EAST': 'E', 'WEST': 'W', 'NORTH': 'N', 'SOUTH': 'S', 'NORTHEAST': 'NE', 'NORTHWEST': 'NW', 'SOUTHEAST': 'SE', 'SOUTHWEST': 'SW'};
             for (const [full, abbr] of Object.entries(directions)) {
                 text = text.replace(new RegExp(`\\b${full}\\b`, 'g'), abbr);
             }
+
+            // 3. Remove Street Type AND everything after it (City/junk)
+            // This ensures "6601 Horseshoe Rd Clinton" becomes "6601 HORSESHOE"
+            // The API search is a LIKE query, so this broad match is safer.
             const streetTypes = ['ST', 'STREET', 'AVE', 'AVENUE', 'RD', 'ROAD', 'DR', 'DRIVE', 'CT', 'COURT', 'LN', 'LANE', 'PL', 'PLACE', 'WAY', 'BLVD', 'BOULEVARD', 'CIR', 'CIRCLE', 'TURN', 'TER', 'TERRACE', 'PKWY', 'PARKWAY', 'TRL', 'TRAIL', 'LOOP', 'PATH', 'WALK', 'RUN', 'GLEN', 'GROVE', 'RIDGE', 'HILL', 'VIEW'];
-            text = text.replace(new RegExp(`\\s+(${streetTypes.join('|')})$`), '');
-            return text.replace(/\s+/g, ' ').trim();
+            
+            // Look for space + TYPE + word boundary. Replace match and rest of string with empty.
+            const typeRegex = new RegExp(`\\s+(${streetTypes.join('|')})\\b.*$`, 'i');
+            text = text.replace(typeRegex, '');
+
+            return text.trim();
         }
 
         function removeDirectionals(cleanAddress) {
