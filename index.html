@@ -12,7 +12,6 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        // Added updateDoc to imports
         import { getFirestore, collection, addDoc, updateDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =========================================================================
@@ -21,6 +20,7 @@
         
         let firebaseConfig = {
             apiKey: "AIzaSyBM6AeJvD0TpXc-ypHKCuRI7suQLAjcFbI",
+            // REVERTED TO DEFAULT: This fixes the 400 Redirect Error immediately
             authDomain: "cardinal-address.firebaseapp.com",
             projectId: "cardinal-address",
             storageBucket: "cardinal-address.firebasestorage.app",
@@ -76,17 +76,9 @@
                 // 2. Check for Redirect Result (Apple/Mobile Fallback)
                 else {
                     try {
-                        const result = await getRedirectResult(auth);
-                        // If we returned from a redirect login, 'result' will be the user credential
+                        await getRedirectResult(auth);
                     } catch (e) {
                         console.error("Redirect Result Error:", e);
-                        // ALERT USER: This captures "random" errors happening on page load
-                        // typically caused by DNS mismatch or Google Console config issues.
-                        if (e.code === 'auth/network-request-failed') {
-                            console.warn("Network error during auth check - likely DNS propagation issue with auth.cardinalcomputersystems.com");
-                        } else {
-                            // alert("Login Error: " + e.message); // Suppress generic errors on load
-                        }
                     }
                 }
             } catch (e) {
@@ -131,26 +123,18 @@
             const provider = new GoogleAuthProvider();
             
             try {
-                // FIX FOR APPLE DEVICES: Force Local Persistence
-                // This helps bypass Safari's aggressive ITP (Intelligent Tracking Prevention)
                 await setPersistence(auth, browserLocalPersistence);
-                
-                // Try Popup first (Standard Desktop)
                 await signInWithPopup(auth, provider);
-                
             } catch (error) {
                 console.error("Popup Login Failed", error);
-                
-                // If Popup fails (often on iPhone), try Redirect
                 if (error.code === 'auth/popup-blocked' || error.message.includes('missing initial state')) {
-                    // alert("Popup failed. Attempting redirect login..."); // Optional: reduce noise
                     try {
                         await signInWithRedirect(auth, provider);
                     } catch (redirectError) {
                         alert("Login failed: " + redirectError.message);
                     }
                 } else {
-                    alert(`Login failed: ${error.message}\n\nTip: On iPhone/Mac, try disabling 'Prevent Cross-Site Tracking' in Safari settings if this persists.`);
+                    alert(`Login failed: ${error.message}`);
                 }
             }
         };
@@ -186,7 +170,6 @@
             if (!batchName) return;
 
             try {
-                // SECURITY UPDATE: Use 'users/{uid}' path instead of 'public'
                 const userId = window.currentUser.uid;
                 const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
                 
@@ -196,10 +179,9 @@
                     createdBy: window.currentUser.email || "Guest",
                     records: window.currentBatchData,
                     recordCount: window.currentBatchData.length,
-                    groupStrikes: window.currentGroupStrikes || [] // Save strike status
+                    groupStrikes: window.currentGroupStrikes || []
                 });
                 
-                // Set as current batch so we can update it immediately if needed
                 window.currentBatchId = docRef.id;
                 document.getElementById('btn-update-db').classList.remove('hidden');
                 
@@ -236,12 +218,10 @@
 
         // READ (Listen to Private Path)
         function initDatabaseListener(userId) {
-            // Ensure we don't have duplicate listeners
             if (window.dbUnsubscribe) {
                 window.dbUnsubscribe();
             }
 
-            // SECURITY UPDATE: Listen to specific user path
             const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
             
             window.dbUnsubscribe = onSnapshot(colRef, (snapshot) => {
@@ -249,10 +229,7 @@
                 snapshot.forEach(doc => {
                     batches.push({ id: doc.id, ...doc.data() });
                 });
-
-                // Sort by timestamp desc (newest first)
                 batches.sort((a, b) => b.timestamp - a.timestamp);
-                
                 renderDatabaseTable(batches);
             }, (error) => {
                 console.error("DB Listener Error:", error);
@@ -262,10 +239,8 @@
         // Manual Refresh Action
         window.refreshDatabase = () => {
             if (window.currentUser) {
-                // Visual feedback
                 const tbody = document.getElementById('db-table-body');
                 if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-gray-400">Refreshing data...</td></tr>';
-                
                 initDatabaseListener(window.currentUser.uid);
             }
         };
@@ -279,7 +254,6 @@
                 const docRef = doc(db, 'artifacts', appId, 'users', userId, 'data_batches', docId);
                 await deleteDoc(docRef);
                 
-                // If we deleted the currently loaded batch, reset tracking
                 if (window.currentBatchId === docId) {
                     window.currentBatchId = null;
                     document.getElementById('btn-update-db').classList.add('hidden');
@@ -289,7 +263,6 @@
             }
         };
 
-        // LOAD
         window.loadBatch = (docId) => {
             // Handled via memory lookup in renderDatabaseTable
         };
@@ -485,7 +458,7 @@
 
                         <button id="btn-save-db" onclick="window.saveBatchToDb()" class="hidden px-5 py-2 bg-emerald-700 text-white font-medium rounded hover:bg-emerald-800 transition shadow-sm flex items-center gap-2">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
-                            Save as New
+                            Save to Private DB
                         </button>
 
                         <button onclick="window.print()" class="px-5 py-2 bg-slate-800 text-white font-medium rounded hover:bg-slate-900 transition flex items-center gap-2">
@@ -677,21 +650,41 @@
             const results = [];
             let processed = 0;
             let skipped = 0;
+            let filtered = 0;
 
             for (const line of lines) {
                 let searchAddress = cleanAddressForSearch(line);
                 let foundMatch = false;
                 
-                const attempts = [searchAddress];
-                const relaxed = removeDirectionals(searchAddress);
-                if (relaxed !== searchAddress) attempts.push(relaxed);
+                // --- Retry Logic with Variations ---
+                const attempts = [];
+                
+                // Attempt 1: Full original address (minus city/state) - e.g. "6416 BROOKE JANE DR"
+                // Important: We try to clean common junk (MD, Zip) but preserve street type.
+                const originalClean = cleanAddressPreservingType(line);
+                attempts.push(originalClean);
+
+                // Attempt 2: Strict Clean (removes street type suffix) - e.g. "6416 BROOKE JANE"
+                const strictClean = cleanAddressStrict(line);
+                if (strictClean !== originalClean) attempts.push(strictClean);
+                
+                // Attempt 3: Remove Directionals - e.g. "5501 BONIWOOD"
+                const relaxed = removeDirectionals(strictClean);
+                if (relaxed !== strictClean) attempts.push(relaxed);
+                
+                // Attempt 4: Plural/Singular Fallback - e.g. "MOORES" -> "MOORE"
+                if (strictClean.endsWith('S')) {
+                    attempts.push(strictClean.slice(0, -1));
+                }
 
                 for (let i = 0; i < attempts.length; i++) {
                     const term = attempts[i];
                     if (i > 0) updateProgress(processed, total, `Retrying: ${term}...`);
 
                     try {
+                        // --- PROXY FETCH IMPLEMENTATION (Fixes CORS) ---
                         const apiData = await fetchPropertyData(term);
+                        
                         if (apiData && apiData.features && apiData.features.length > 0) {
                             
                             let targetAttr = null;
@@ -706,7 +699,6 @@
                                 }
                             } else {
                                 // 2. If relaxed mode, take the best match (first one usually)
-                                // We prefer H if available, otherwise take whatever
                                 const hMatch = apiData.features.find(f => f.attributes.OOI === 'H');
                                 targetAttr = hMatch ? hMatch.attributes : apiData.features[0].attributes;
                             }
@@ -719,7 +711,7 @@
                             } else {
                                 // Found records, but filtered out by Strict Mode
                                 console.warn(`Found address ${term} but strict OOI check failed.`);
-                                skipped++;
+                                filtered++; // Count as found-but-filtered
                                 foundMatch = true;
                                 break; 
                             }
@@ -727,7 +719,8 @@
                     } catch (err) { console.error("API Error", err); }
                     if (i < attempts.length - 1) await new Promise(r => setTimeout(r, 200));
                 }
-                if (!foundMatch) skipped++;
+                
+                if (!foundMatch) skipped++; // Truly not found in DB
 
                 processed++;
                 updateProgress(processed, total);
@@ -739,7 +732,12 @@
             // Initialize strike array
             window.currentGroupStrikes = new Array(Math.ceil(results.length / 5)).fill(false);
             
-            renderResults(results, skipped, "API Lookup");
+            // Build Status Message
+            let statusMsg = `Processed ${total} addresses. Found ${results.length}. `;
+            if (filtered > 0) statusMsg += `Filtered (Non-Owner): ${filtered}. `;
+            if (skipped > 0) statusMsg += `Not Found: ${skipped}.`;
+            
+            renderResults(results, statusMsg);
             document.getElementById('progressContainer').classList.add('hidden');
             
             // Show Save Button
@@ -763,13 +761,7 @@
             lines.forEach(line => {
                 const cols = line.split(',').map(s => s.trim());
                 if (cols.length < 5) return;
-                const ownerOcc = cols[5] ? cols[5].toUpperCase() : 'YES'; 
-                const isBiz = cols[6] ? cols[6].toUpperCase() : 'NO';
-
-                if (!ownerOcc.includes('YES') || isBiz.includes('YES')) {
-                    skipped++;
-                    return;
-                }
+                
                 results.push({
                     name: formatName(cols[0]),
                     address: toTitleCase(cols[1]),
@@ -782,15 +774,18 @@
             window.currentBatchData = results;
             window.currentGroupStrikes = new Array(Math.ceil(results.length / 5)).fill(false);
             
-            renderResults(results, skipped, "CSV Processing");
+            renderResults(results, `Found ${results.length} records.`);
             if (results.length > 0 && !window.currentUser?.isAnonymous) document.getElementById('btn-save-db').classList.remove('hidden');
         }
 
         // --- RENDERER ---
-        function renderResults(data, skippedCount, source) {
+        function renderResults(data, statusText) {
             const canvas = document.getElementById('outputCanvas');
             const stats = document.getElementById('stats');
             canvas.innerHTML = '';
+            
+            // Update stats text
+            stats.innerHTML = statusText || "";
             
             if (data.length === 0) {
                 canvas.innerHTML = '<div class="text-center text-red-500 mt-10">No valid properties found. Try unchecking "Require Owner-Occupied" if expected.</div>';
@@ -876,60 +871,71 @@
                 groupDiv.appendChild(table);
                 canvas.appendChild(groupDiv);
             }
-            stats.innerHTML = `[${source}] Found ${data.length} records. Skipped ${skippedCount}.`;
         }
 
         // --- HELPERS (Address Cleaning) ---
+        
+        // PROXY FETCH
         async function fetchPropertyData(cleanAddress) {
             const escaped = cleanAddress.replace(/'/g, "''");
             const params = new URLSearchParams({
-                // MODIFIED QUERY: Reverted STRICT filter. We now allow ALL results and filter in JS.
                 where: `UPPER(ADDRESS) LIKE UPPER('%${escaped}%') AND JURSCODE = 'PRIN'`,
                 outFields: 'ACCTID,ADDRESS,CITY,ZIPCODE,OWNNAME1,OOI',
                 returnGeometry: 'false',
                 f: 'json',
                 resultRecordCount: '10'
             });
-            const response = await fetch(`${API_URL}?${params.toString()}`);
-            if (!response.ok) throw new Error("Network response was not ok");
-            return await response.json();
+            
+            const targetUrl = `${API_URL}?${params.toString()}`;
+            
+            // Cache busting
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}&timestamp=${Date.now()}`;
+
+            try {
+                const response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error("Network response was not ok");
+                return await response.json();
+            } catch (err) {
+                console.error("Proxy Fetch Error", err);
+                throw new Error("Unable to retrieve property data (Network/Proxy Error).");
+            }
         }
 
         function cleanAddressForSearch(rawLine) {
+            return cleanAddressPreservingType(rawLine); // Wrapper for new logic
+        }
+
+        // 1. Light Clean: Removes City/State/Zip/Tabs but KEEPS street type
+        // e.g. "6416 Brooke Jane Dr Clinton..." -> "6416 BROOKE JANE DR"
+        function cleanAddressPreservingType(rawLine) {
             let text = rawLine.trim();
-            
-            // TAB DELIMITER FIX:
             if (text.includes('\t')) {
                 const parts = text.split('\t');
-                if (parts.length >= 2) {
-                    text = `${parts[0].trim()} ${parts[1].trim()}`;
-                } else {
-                    text = parts[0].trim();
-                }
+                text = parts.length >= 2 ? `${parts[0].trim()} ${parts[1].trim()}` : parts[0].trim();
             }
-            
             text = text.toUpperCase();
-
-            // 1. Remove MD and Zip Code from end (e.g. " CLINTON MD 20735")
-            // Matches " MD" followed by optional zip, at the end of string
-            text = text.replace(/\s+MD(\s+\d{5}(-\d{4})?)?$/, '');
-
-            // 2. Standardize Directions
+            
+            // Standardize directions first
             const directions = {'EAST': 'E', 'WEST': 'W', 'NORTH': 'N', 'SOUTH': 'S', 'NORTHEAST': 'NE', 'NORTHWEST': 'NW', 'SOUTHEAST': 'SE', 'SOUTHWEST': 'SW'};
             for (const [full, abbr] of Object.entries(directions)) {
                 text = text.replace(new RegExp(`\\b${full}\\b`, 'g'), abbr);
             }
 
-            // 3. Remove Street Type AND everything after it (City/junk)
-            // This ensures "6601 Horseshoe Rd Clinton" becomes "6601 HORSESHOE"
-            // The API search is a LIKE query, so this broad match is safer.
-            const streetTypes = ['ST', 'STREET', 'AVE', 'AVENUE', 'RD', 'ROAD', 'DR', 'DRIVE', 'CT', 'COURT', 'LN', 'LANE', 'PL', 'PLACE', 'WAY', 'BLVD', 'BOULEVARD', 'CIR', 'CIRCLE', 'TURN', 'TER', 'TERRACE', 'PKWY', 'PARKWAY', 'TRL', 'TRAIL', 'LOOP', 'PATH', 'WALK', 'RUN', 'GLEN', 'GROVE', 'RIDGE', 'HILL', 'VIEW'];
-            
-            // Look for space + TYPE + word boundary. Replace match and rest of string with empty.
-            const typeRegex = new RegExp(`\\s+(${streetTypes.join('|')})\\b.*$`, 'i');
-            text = text.replace(typeRegex, '');
+            // Aggressively remove City/State/Zip logic
+            // Matches optional comma, then space, then MD, then end of string or zip
+            text = text.replace(/,?\s+MD.*$/, ''); // Remove MD and anything after
+            text = text.replace(/,?\s+CLINTON.*$/, ''); // Common city removal (can extend list if needed)
+            text = text.replace(/\s+\d{5}(-\d{4})?$/, ''); // Remove zip code at end
 
             return text.trim();
+        }
+
+        // 2. Strict Clean: Removes Street Type as well
+        // e.g. "6416 BROOKE JANE DR" -> "6416 BROOKE JANE"
+        function cleanAddressStrict(text) {
+            const streetTypes = ['ST', 'STREET', 'AVE', 'AVENUE', 'RD', 'ROAD', 'DR', 'DRIVE', 'CT', 'COURT', 'LN', 'LANE', 'PL', 'PLACE', 'WAY', 'BLVD', 'BOULEVARD', 'CIR', 'CIRCLE', 'TURN', 'TER', 'TERRACE', 'PKWY', 'PARKWAY', 'TRL', 'TRAIL', 'LOOP', 'PATH', 'WALK', 'RUN', 'GLEN', 'GROVE', 'RIDGE', 'HILL', 'VIEW'];
+            const typeRegex = new RegExp(`\\s+(${streetTypes.join('|')})\\b.*$`, 'i');
+            return text.replace(typeRegex, '').trim();
         }
 
         function removeDirectionals(cleanAddress) {
