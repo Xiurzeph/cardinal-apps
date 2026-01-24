@@ -3,13 +3,1007 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>Cardinal Address Lookup</title>
+    <!-- Favicon -->
+    <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDKs -->
     <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        // Added updateDoc to imports
+        import { getFirestore, collection, addDoc, updateDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // =========================================================================
+        // --- [STEP 1] FIREBASE CONFIGURATION ---
+        // =========================================================================
+        
+        let firebaseConfig = {
+            apiKey: "AIzaSyBM6AeJvD0TpXc-ypHKCuRI7suQLAjcFbI",
+            authDomain: "auth.cardinalcomputersystems.com",
+            projectId: "cardinal-address",
+            storageBucket: "cardinal-address.firebasestorage.app",
+            messagingSenderId: "286969027972",
+            appId: "1:286969027972:web:95b5e707cd5a02d6a0d1d1"
+        };
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        // --- AUTOMATIC ENV DETECTION (Do not edit this part) ---
+        // This allows the app to work inside the AI preview AND on your real site.
+        if (typeof __firebase_config !== 'undefined') {
+            firebaseConfig = JSON.parse(__firebase_config);
+        }
+        // =========================================================================
+
+        // --- CONFIGURATION SAFETY CHECK ---
+        const isConfigured = firebaseConfig.apiKey && !firebaseConfig.apiKey.includes("PASTE_YOUR");
+        
+        if (!isConfigured) {
+            window.onload = () => {
+                document.body.innerHTML = `
+                    <div class="fixed inset-0 flex items-center justify-center bg-gray-900 text-white p-10 text-center">
+                        <div class="max-w-2xl">
+                            <h1 class="text-3xl font-bold text-red-500 mb-4">Configuration Missing</h1>
+                            <p class="text-lg mb-6">The application cannot connect to the database because it is missing your Firebase API keys.</p>
+                        </div>
+                    </div>
+                `;
+            }
+            throw new Error("Firebase Config Missing"); // Stop execution
+        }
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Global State for User
+        window.currentUser = null;
+        window.currentBatchData = null; // Store current results to save
+        window.currentGroupStrikes = []; // Store strike status for groups
+        window.currentBatchId = null; // Track if we are editing an existing batch
+        window.dbUnsubscribe = null; // To stop listening when logging out
+
+        // --- AUTH LOGIC ---
+        
+        async function initAuth() {
+            try {
+                // 1. Check for Custom Token (Canvas Environment)
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } 
+                // 2. Check for Redirect Result (Apple/Mobile Fallback)
+                else {
+                    try {
+                        const result = await getRedirectResult(auth);
+                        // If we returned from a redirect login, 'result' will be the user credential
+                    } catch (e) {
+                        console.error("Redirect Result Error:", e);
+                        // ALERT USER: This captures "random" errors happening on page load
+                        // typically caused by DNS mismatch or Google Console config issues.
+                        if (e.code === 'auth/network-request-failed') {
+                            console.warn("Network error during auth check - likely DNS propagation issue with auth.cardinalcomputersystems.com");
+                        } else {
+                            // alert("Login Error: " + e.message); // Suppress generic errors on load
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Auth Init Error:", e);
+            }
+        }
+        initAuth();
+
+        // Auth State Listener
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                window.currentUser = user;
+                document.getElementById('login-screen').classList.add('hidden');
+                document.getElementById('app-content').classList.remove('hidden');
+                document.getElementById('user-display').innerText = user.email || "Guest User";
+                
+                if (user.isAnonymous) {
+                    // Hide Database features for Guest
+                    document.getElementById('btn-tab-database').classList.add('hidden');
+                } else {
+                    // Show Database features for Auth User
+                    document.getElementById('btn-tab-database').classList.remove('hidden');
+                    // Initialize Private Database Listener
+                    initDatabaseListener(user.uid);
+                }
+            } else {
+                window.currentUser = null;
+                // Unsubscribe from DB updates
+                if (window.dbUnsubscribe) window.dbUnsubscribe();
+                
+                // Hide buttons and reset views
+                document.getElementById('btn-save-db').classList.add('hidden');
+                document.getElementById('btn-update-db').classList.add('hidden');
+                
+                document.getElementById('login-screen').classList.remove('hidden');
+                document.getElementById('app-content').classList.add('hidden');
+            }
+        });
+
+        // Global Auth Functions
+        window.googleLogin = async () => {
+            const provider = new GoogleAuthProvider();
+            
+            try {
+                // FIX FOR APPLE DEVICES: Force Local Persistence
+                // This helps bypass Safari's aggressive ITP (Intelligent Tracking Prevention)
+                await setPersistence(auth, browserLocalPersistence);
+                
+                // Try Popup first (Standard Desktop)
+                await signInWithPopup(auth, provider);
+                
+            } catch (error) {
+                console.error("Popup Login Failed", error);
+                
+                // If Popup fails (often on iPhone), try Redirect
+                if (error.code === 'auth/popup-blocked' || error.message.includes('missing initial state')) {
+                    // alert("Popup failed. Attempting redirect login..."); // Optional: reduce noise
+                    try {
+                        await signInWithRedirect(auth, provider);
+                    } catch (redirectError) {
+                        alert("Login failed: " + redirectError.message);
+                    }
+                } else {
+                    alert(`Login failed: ${error.message}\n\nTip: On iPhone/Mac, try disabling 'Prevent Cross-Site Tracking' in Safari settings if this persists.`);
+                }
+            }
+        };
+
+        window.guestLogin = async () => {
+            try {
+                await signInAnonymously(auth);
+            } catch (error) {
+                console.error("Guest Login Failed", error);
+                if (error.code === 'auth/admin-restricted-operation') {
+                    alert("Guest login is disabled. Please enable 'Anonymous' in Firebase Console.");
+                } else {
+                    alert("Guest login failed: " + error.message);
+                }
+            }
+        };
+
+        window.logout = () => {
+            signOut(auth);
+        };
+
+        // --- DATABASE LOGIC (SECURE / PRIVATE) ---
+
+        // SAVE AS NEW (Private Path)
+        window.saveBatchToDb = async () => {
+            if (!window.currentUser) return;
+            if (!window.currentBatchData || window.currentBatchData.length === 0) {
+                alert("No formatted data to save! Run the formatter first.");
+                return;
+            }
+            
+            const batchName = prompt("Enter a name for this batch:", `Batch ${new Date().toLocaleDateString()}`);
+            if (!batchName) return;
+
+            try {
+                // SECURITY UPDATE: Use 'users/{uid}' path instead of 'public'
+                const userId = window.currentUser.uid;
+                const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
+                
+                const docRef = await addDoc(colRef, {
+                    name: batchName,
+                    timestamp: Date.now(),
+                    createdBy: window.currentUser.email || "Guest",
+                    records: window.currentBatchData,
+                    recordCount: window.currentBatchData.length,
+                    groupStrikes: window.currentGroupStrikes || [] // Save strike status
+                });
+                
+                // Set as current batch so we can update it immediately if needed
+                window.currentBatchId = docRef.id;
+                document.getElementById('btn-update-db').classList.remove('hidden');
+                
+                alert("Batch saved securely to your private history!");
+                switchTab('database');
+            } catch (e) {
+                console.error("Save Error:", e);
+                alert("Error saving to database: " + e.message);
+            }
+        };
+
+        // UPDATE EXISTING (Private Path)
+        window.updateBatchInDb = async () => {
+            if (!window.currentUser || !window.currentBatchId) return;
+            
+            try {
+                const userId = window.currentUser.uid;
+                const docRef = doc(db, 'artifacts', appId, 'users', userId, 'data_batches', window.currentBatchId);
+                
+                await updateDoc(docRef, {
+                    records: window.currentBatchData,
+                    recordCount: window.currentBatchData.length,
+                    groupStrikes: window.currentGroupStrikes || [],
+                    lastUpdated: Date.now()
+                });
+                
+                alert("Batch updated successfully!");
+                switchTab('database');
+            } catch (e) {
+                console.error("Update Error:", e);
+                alert("Error updating batch: " + e.message);
+            }
+        };
+
+        // READ (Listen to Private Path)
+        function initDatabaseListener(userId) {
+            // Ensure we don't have duplicate listeners
+            if (window.dbUnsubscribe) {
+                window.dbUnsubscribe();
+            }
+
+            // SECURITY UPDATE: Listen to specific user path
+            const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
+            
+            window.dbUnsubscribe = onSnapshot(colRef, (snapshot) => {
+                const batches = [];
+                snapshot.forEach(doc => {
+                    batches.push({ id: doc.id, ...doc.data() });
+                });
+
+                // Sort by timestamp desc (newest first)
+                batches.sort((a, b) => b.timestamp - a.timestamp);
+                
+                renderDatabaseTable(batches);
+            }, (error) => {
+                console.error("DB Listener Error:", error);
+            });
+        }
+
+        // Manual Refresh Action
+        window.refreshDatabase = () => {
+            if (window.currentUser) {
+                // Visual feedback
+                const tbody = document.getElementById('db-table-body');
+                if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-gray-400">Refreshing data...</td></tr>';
+                
+                initDatabaseListener(window.currentUser.uid);
+            }
+        };
+
+        // DELETE (Private Path)
+        window.deleteBatch = async (docId) => {
+            if (!confirm("Are you sure you want to delete this batch?")) return;
+            
+            try {
+                const userId = window.currentUser.uid;
+                const docRef = doc(db, 'artifacts', appId, 'users', userId, 'data_batches', docId);
+                await deleteDoc(docRef);
+                
+                // If we deleted the currently loaded batch, reset tracking
+                if (window.currentBatchId === docId) {
+                    window.currentBatchId = null;
+                    document.getElementById('btn-update-db').classList.add('hidden');
+                }
+            } catch (e) {
+                alert("Delete failed: " + e.message);
+            }
+        };
+
+        // LOAD
+        window.loadBatch = (docId) => {
+            // Handled via memory lookup in renderDatabaseTable
+        };
+
     </script>
+    <style>
+        /* Print-specific styles */
+        @media print {
+            @page {
+                size: 8.5in 11in;
+                margin: 0.5in;
+            }
+            body {
+                background: white;
+                -webkit-print-color-adjust: exact;
+            }
+            .no-print {
+                display: none !important;
+            }
+            .print-area {
+                box-shadow: none !important;
+                margin: 0 !important;
+                width: 100% !important;
+                border: none !important;
+            }
+            /* Ensure background colors print */
+            * {
+                -webkit-print-color-adjust: exact !important;   /* Chrome, Safari */
+                print-color-adjust: exact !important;           /* Firefox */
+            }
+        }
+
+        /* Screen simulation of paper */
+        .print-area {
+            width: 8.5in;
+            min-height: 11in;
+            background: white;
+            padding: 0.5in;
+            margin: 20px auto;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            box-sizing: border-box;
+        }
+
+        /* Table Styles */
+        .address-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 4px;
+        }
+        .address-row td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #eee;
+            background-color: #fff;
+            font-size: 11pt;
+            vertical-align: top;
+        }
+        
+        /* Modal & Tab Styles */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+        }
+        
+        /* Business Colors: Cardinal Red (approx Tailwind red-700) */
+        .tab-active {
+            border-bottom: 2px solid #b91c1c; /* red-700 */
+            color: #b91c1c;
+        }
+        .tab-inactive {
+            color: #64748b; /* slate-500 */
+        }
+
+        /* Strike Styles */
+        .group-struck table {
+            opacity: 0.5;
+        }
+        .group-struck td {
+            text-decoration: line-through;
+            color: #999;
+        }
+    </style>
 </head>
-<body>
-    <h1>Welcome to Cardinal Apps</h1>
-    <p>Your HTML content goes here...</p>
+<body class="bg-gray-100 font-sans text-gray-800 h-screen flex flex-col">
+
+    <!-- LOGIN SCREEN -->
+    <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900 bg-opacity-70 backdrop-blur-sm">
+        <div class="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center">
+            <div class="mb-6 flex flex-col items-center">
+                <!-- Cardinal Logo -->
+                <img src="https://cardinalcomputersystems.com/cardinal-logo.png" alt="Cardinal Logo" class="h-16 w-auto mb-4">
+                <h1 class="text-2xl font-bold text-slate-800">Address Lookup</h1>
+                <p class="text-slate-500 mt-2">Sign in to access the MD Property Lookup tool and your private database.</p>
+            </div>
+            
+            <button onclick="window.googleLogin()" class="w-full mb-3 py-3 px-4 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 flex items-center justify-center gap-3 transition">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5" alt="Google">
+                <span class="font-medium text-slate-700">Sign in with Google</span>
+            </button>
+            
+            <button onclick="window.guestLogin()" class="w-full py-2 text-sm text-gray-400 hover:text-gray-600">
+                Continue as Guest (No Save)
+            </button>
+        </div>
+    </div>
+
+    <!-- APP CONTENT -->
+    <div id="app-content" class="hidden flex-1 flex flex-col">
+        
+        <!-- Navbar -->
+        <header class="no-print bg-white border-b border-gray-200 px-6 py-3 flex justify-between items-center sticky top-0 z-40">
+            <div class="flex items-center gap-3">
+                <!-- Cardinal Header Logo -->
+                <img src="https://cardinalcomputersystems.com/cardinal-logo.png" alt="Cardinal Logo" class="h-8 w-auto">
+                <h1 class="font-bold text-lg text-slate-800">Address Lookup</h1>
+                <span class="text-xs bg-red-50 text-red-700 px-2 py-0.5 rounded-full border border-red-100">MD Edition</span>
+            </div>
+            
+            <div class="flex items-center gap-6">
+                <nav class="flex gap-4 text-sm font-medium">
+                    <button onclick="switchTab('formatter')" id="btn-tab-formatter" class="tab-active py-1">Formatter Tool</button>
+                    <button onclick="switchTab('database')" id="btn-tab-database" class="tab-inactive py-1">Saved Batches</button>
+                </nav>
+                
+                <div class="flex items-center gap-3 pl-6 border-l border-gray-200">
+                    <div class="text-right hidden sm:block">
+                        <div id="user-display" class="text-xs font-semibold text-slate-700">user@example.com</div>
+                        <div class="text-[10px] text-green-600 font-bold">Private Access</div>
+                    </div>
+                    <button onclick="window.logout()" class="text-gray-400 hover:text-red-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- MAIN AREA -->
+        <main class="flex-1 overflow-auto bg-slate-50 relative">
+            
+            <!-- TAB: FORMATTER -->
+            <div id="tab-formatter" class="w-full pb-20">
+                <!-- Control Panel -->
+                <div class="no-print max-w-4xl mx-auto p-6 bg-white shadow-sm rounded-lg mt-6 mb-6 border border-gray-200">
+                    
+                    <div class="mb-4">
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="block text-sm font-medium text-slate-700">
+                                Input Addresses (Enter to add new line)
+                            </label>
+                            <span class="text-xs text-gray-500">Supports: Text, Tab-Delimited, Partial Address</span>
+                        </div>
+                        <!-- Cardinal Red Focus Ring -->
+                        <textarea id="csvInput" class="w-full h-32 p-3 border border-gray-300 rounded-md font-mono text-sm focus:ring-2 focus:ring-red-700 focus:border-red-700" placeholder="12345	Some Street	Extra Info&#10;100 Main Street"></textarea>
+                        
+                        <!-- NEW FILTER CHECKBOX -->
+                        <div class="mt-2 flex items-center">
+                            <input id="chkOwnerOccupied" type="checkbox" checked class="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded">
+                            <label for="chkOwnerOccupied" class="ml-2 block text-sm text-gray-700">
+                                Require Owner-Occupied (Filter out rentals/businesses)
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Progress Bar -->
+                    <div id="progressContainer" class="hidden mb-4">
+                        <div class="flex justify-between text-xs mb-1">
+                            <span id="progressText" class="text-slate-600">Processing...</span>
+                            <span id="progressPercent" class="text-slate-600 font-bold">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5">
+                            <!-- Cardinal Red Progress Bar -->
+                            <div id="progressBar" class="bg-red-700 h-2.5 rounded-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="flex flex-wrap gap-3 border-t border-gray-100 pt-4">
+                        <!-- Cardinal Red Primary Button -->
+                        <button onclick="runLookupAndFormat()" class="px-5 py-2 bg-red-700 text-white font-medium rounded hover:bg-red-800 transition flex items-center gap-2 shadow-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                            Fetch & Format
+                        </button>
+                        
+                        <button onclick="processCSVData()" class="px-5 py-2 bg-white text-slate-700 font-medium rounded border border-gray-300 hover:bg-gray-50 transition">
+                            Format Only (CSV)
+                        </button>
+                        
+                        <div class="flex-1"></div>
+
+                        <button id="btn-update-db" onclick="window.updateBatchInDb()" class="hidden px-5 py-2 bg-blue-700 text-white font-medium rounded hover:bg-blue-800 transition shadow-sm flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            Update Batch
+                        </button>
+
+                        <button id="btn-save-db" onclick="window.saveBatchToDb()" class="hidden px-5 py-2 bg-emerald-700 text-white font-medium rounded hover:bg-emerald-800 transition shadow-sm flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                            Save as New
+                        </button>
+
+                        <button onclick="window.print()" class="px-5 py-2 bg-slate-800 text-white font-medium rounded hover:bg-slate-900 transition flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                            Print PDF
+                        </button>
+                    </div>
+                    
+                    <div id="stats" class="mt-2 text-xs text-gray-400 font-mono text-right h-4"></div>
+                </div>
+
+                <!-- Printable Canvas -->
+                <div id="outputCanvas" class="print-area">
+                    <div class="text-center text-gray-400 mt-20 italic">
+                        Results will appear here...
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: DATABASE -->
+            <div id="tab-database" class="hidden w-full p-6">
+                <div class="max-w-5xl mx-auto">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-xl font-bold text-slate-800">Your Private Batches</h2>
+                        <button onclick="window.refreshDatabase()" class="flex items-center gap-2 px-3 py-1 bg-white border border-gray-200 rounded shadow-sm text-sm text-gray-600 hover:text-red-700 hover:border-red-200 transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            Refresh Data
+                        </button>
+                    </div>
+
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                        <!-- Responsive Scroll Wrapper -->
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-slate-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">Batch Name</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">Date</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">Count</th>
+                                        <th class="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="db-table-body" class="bg-white divide-y divide-gray-200">
+                                    <!-- Loaded via JS -->
+                                    <tr>
+                                        <td colspan="4" class="px-6 py-12 text-center text-gray-400">
+                                            Loading your private history...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        // --- UI LOGIC ---
+        
+        // Tab Switcher
+        window.switchTab = (tabName) => {
+            const tabs = ['formatter', 'database'];
+            tabs.forEach(t => {
+                const el = document.getElementById(`tab-${t}`);
+                const btn = document.getElementById(`btn-tab-${t}`);
+                if (t === tabName) {
+                    el.classList.remove('hidden');
+                    btn.classList.remove('tab-inactive');
+                    btn.classList.add('tab-active');
+                } else {
+                    el.classList.add('hidden');
+                    btn.classList.remove('tab-active');
+                    btn.classList.add('tab-inactive');
+                }
+            });
+
+            // Auto-refresh when switching to database tab
+            if (tabName === 'database') {
+                window.refreshDatabase();
+            }
+        };
+
+        // Render DB Table
+        window.renderDatabaseTable = (batches) => {
+            const tbody = document.getElementById('db-table-body');
+            tbody.innerHTML = '';
+
+            if (batches.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="px-6 py-8 text-center text-gray-400">No batches saved yet.</td></tr>`;
+                return;
+            }
+
+            // Store for loading
+            window.allBatches = batches;
+
+            batches.forEach((batch, index) => {
+                const date = new Date(batch.timestamp).toLocaleString();
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">${batch.name || 'Untitled'}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">${date}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">${batch.recordCount || 0} Records</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <button onclick="loadBatchFromMemory(${index})" class="text-red-700 hover:text-red-900 mr-4 font-semibold">Load</button>
+                        <button onclick="deleteBatch('${batch.id}')" class="text-gray-400 hover:text-red-600">Delete</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        };
+
+        window.loadBatchFromMemory = (index) => {
+            const batch = window.allBatches[index];
+            if (!batch) return;
+            
+            // Load data
+            window.currentBatchData = batch.records;
+            window.currentGroupStrikes = batch.groupStrikes || []; // Load saved strikes
+            window.currentBatchId = batch.id; // Set ID for update capability
+            
+            renderResults(batch.records, 0, `Loaded: ${batch.name}`);
+            
+            // Switch tab
+            switchTab('formatter');
+            
+            // Update button visibility
+            if (!window.currentUser?.isAnonymous) {
+                document.getElementById('btn-save-db').classList.remove('hidden');
+                document.getElementById('btn-update-db').classList.remove('hidden');
+            }
+            
+            // Show notification
+            alert(`Loaded batch "${batch.name}" with ${batch.records.length} records.`);
+        };
+
+        // Function to toggle strike status
+        window.toggleGroupStrike = (groupIndex) => {
+            // Update state
+            const isStruck = !window.currentGroupStrikes[groupIndex];
+            window.currentGroupStrikes[groupIndex] = isStruck;
+            
+            // Update Group UI (Strikethrough text)
+            const groupDiv = document.getElementById(`group-div-${groupIndex}`);
+            if (groupDiv) {
+                if (isStruck) {
+                    groupDiv.classList.add('group-struck');
+                } else {
+                    groupDiv.classList.remove('group-struck');
+                }
+            }
+
+            // Update Button UI (Color/State)
+            const btn = document.getElementById(`strike-btn-${groupIndex}`);
+            if (btn) {
+                if (isStruck) {
+                    btn.className = 'p-1 rounded-md transition-colors no-print bg-red-100 text-red-700 shadow-sm';
+                    btn.title = "Restore Group";
+                } else {
+                    btn.className = 'p-1 rounded-md transition-colors no-print text-gray-400 hover:text-gray-600 hover:bg-gray-100';
+                    btn.title = "Strike Through Group";
+                }
+            }
+        };
+
+
+        // --- FORMATTER LOGIC (Preserved) ---
+        const API_URL = "https://geodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
+
+        async function runLookupAndFormat() {
+            const rawInput = document.getElementById('csvInput').value.trim();
+            if (!rawInput) return alert("Please enter addresses.");
+            
+            // Reset current batch ID since this is a new search
+            window.currentBatchId = null;
+            document.getElementById('btn-update-db').classList.add('hidden');
+            
+            // Get Checkbox State
+            const requireOwnerOccupied = document.getElementById('chkOwnerOccupied').checked;
+
+            const lines = rawInput.split('\n').filter(l => l.trim().length > 0);
+            const total = lines.length;
+            
+            updateProgress(0, total, "Starting...");
+            document.getElementById('progressContainer').classList.remove('hidden');
+
+            const results = [];
+            let processed = 0;
+            let skipped = 0;
+
+            for (const line of lines) {
+                let searchAddress = cleanAddressForSearch(line);
+                let foundMatch = false;
+                
+                const attempts = [searchAddress];
+                const relaxed = removeDirectionals(searchAddress);
+                if (relaxed !== searchAddress) attempts.push(relaxed);
+
+                for (let i = 0; i < attempts.length; i++) {
+                    const term = attempts[i];
+                    if (i > 0) updateProgress(processed, total, `Retrying: ${term}...`);
+
+                    try {
+                        const apiData = await fetchPropertyData(term);
+                        if (apiData && apiData.features && apiData.features.length > 0) {
+                            
+                            let targetAttr = null;
+
+                            // 1. If strict mode, find OOI='H'
+                            if (requireOwnerOccupied) {
+                                for (const feature of apiData.features) {
+                                    if (feature.attributes.OOI === 'H') {
+                                        targetAttr = feature.attributes;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                // 2. If relaxed mode, take the best match (first one usually)
+                                // We prefer H if available, otherwise take whatever
+                                const hMatch = apiData.features.find(f => f.attributes.OOI === 'H');
+                                targetAttr = hMatch ? hMatch.attributes : apiData.features[0].attributes;
+                            }
+                            
+                            if (targetAttr) {
+                                const formattedRecord = formatApiRecord(targetAttr);
+                                results.push(formattedRecord);
+                                foundMatch = true;
+                                break;
+                            } else {
+                                // Found records, but filtered out by Strict Mode
+                                console.warn(`Found address ${term} but strict OOI check failed.`);
+                                skipped++;
+                                foundMatch = true;
+                                break; 
+                            }
+                        }
+                    } catch (err) { console.error("API Error", err); }
+                    if (i < attempts.length - 1) await new Promise(r => setTimeout(r, 200));
+                }
+                if (!foundMatch) skipped++;
+
+                processed++;
+                updateProgress(processed, total);
+                await new Promise(r => setTimeout(r, 100)); 
+            }
+
+            // Save to global for persistence
+            window.currentBatchData = results;
+            // Initialize strike array
+            window.currentGroupStrikes = new Array(Math.ceil(results.length / 5)).fill(false);
+            
+            renderResults(results, skipped, "API Lookup");
+            document.getElementById('progressContainer').classList.add('hidden');
+            
+            // Show Save Button
+            if (results.length > 0 && !window.currentUser?.isAnonymous) {
+                document.getElementById('btn-save-db').classList.remove('hidden');
+            }
+        }
+
+        function processCSVData() {
+            const rawData = document.getElementById('csvInput').value.trim();
+            if (!rawData) return alert("Please enter CSV data.");
+            
+            // Reset current batch ID since this is a new process
+            window.currentBatchId = null;
+            document.getElementById('btn-update-db').classList.add('hidden');
+
+            const lines = rawData.split('\n');
+            let results = [];
+            let skipped = 0;
+
+            lines.forEach(line => {
+                const cols = line.split(',').map(s => s.trim());
+                if (cols.length < 5) return;
+                const ownerOcc = cols[5] ? cols[5].toUpperCase() : 'YES'; 
+                const isBiz = cols[6] ? cols[6].toUpperCase() : 'NO';
+
+                if (!ownerOcc.includes('YES') || isBiz.includes('YES')) {
+                    skipped++;
+                    return;
+                }
+                results.push({
+                    name: formatName(cols[0]),
+                    address: toTitleCase(cols[1]),
+                    city: toTitleCase(cols[2]),
+                    state: cols[3].toUpperCase(),
+                    zip: cols[4],
+                    streetName: extractStreetName(cols[1])
+                });
+            });
+            window.currentBatchData = results;
+            window.currentGroupStrikes = new Array(Math.ceil(results.length / 5)).fill(false);
+            
+            renderResults(results, skipped, "CSV Processing");
+            if (results.length > 0 && !window.currentUser?.isAnonymous) document.getElementById('btn-save-db').classList.remove('hidden');
+        }
+
+        // --- RENDERER ---
+        function renderResults(data, skippedCount, source) {
+            const canvas = document.getElementById('outputCanvas');
+            const stats = document.getElementById('stats');
+            canvas.innerHTML = '';
+            
+            if (data.length === 0) {
+                canvas.innerHTML = '<div class="text-center text-red-500 mt-10">No valid properties found. Try unchecking "Require Owner-Occupied" if expected.</div>';
+                return;
+            }
+
+            const chunkSize = 5;
+            // Ensure strike array matches group count (handle legacy loads)
+            const numGroups = Math.ceil(data.length / chunkSize);
+            if (!window.currentGroupStrikes || window.currentGroupStrikes.length !== numGroups) {
+               // Preserve existing if possible, extend if needed, or init new
+               const newStrikes = new Array(numGroups).fill(false);
+               if(window.currentGroupStrikes) {
+                   window.currentGroupStrikes.forEach((val, i) => { if(i < newStrikes.length) newStrikes[i] = val; });
+               }
+               window.currentGroupStrikes = newStrikes;
+            }
+
+            let groupCount = 0;
+
+            for (let i = 0; i < data.length; i += chunkSize) {
+                const groupIndex = groupCount; // 0-based index for array
+                groupCount++; // 1-based index for display
+                const group = data.slice(i, i + chunkSize);
+                
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'mb-8 break-inside-avoid';
+                groupDiv.id = `group-div-${groupIndex}`;
+                
+                const isStruck = window.currentGroupStrikes[groupIndex];
+
+                // Apply strike style if state is true
+                if (isStruck) {
+                    groupDiv.classList.add('group-struck');
+                }
+                
+                // Flex container for header and button
+                const headerContainer = document.createElement('div');
+                headerContainer.className = 'flex justify-between items-end border-b border-gray-300 pb-1 mb-2';
+
+                const header = document.createElement('h3');
+                header.className = 'text-sm font-bold text-gray-500 uppercase tracking-wide';
+                header.innerText = `Group ${groupCount}`;
+                
+                // Strike Button (Icon)
+                const actionBtn = document.createElement('button');
+                actionBtn.id = `strike-btn-${groupIndex}`;
+                actionBtn.onclick = () => window.toggleGroupStrike(groupIndex);
+                actionBtn.title = isStruck ? "Restore Group" : "Strike Through Group";
+                
+                // Conditional Styling based on state
+                if (isStruck) {
+                    actionBtn.className = 'p-1 rounded-md transition-colors no-print bg-red-100 text-red-700 shadow-sm';
+                } else {
+                    actionBtn.className = 'p-1 rounded-md transition-colors no-print text-gray-400 hover:text-gray-600 hover:bg-gray-100';
+                }
+
+                // Ban/Strike Icon
+                actionBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                `;
+
+                headerContainer.appendChild(header);
+                headerContainer.appendChild(actionBtn);
+                groupDiv.appendChild(headerContainer);
+
+                const table = document.createElement('table');
+                table.className = 'address-table';
+
+                group.forEach(item => {
+                    const row = document.createElement('tr');
+                    row.className = 'address-row';
+                    const cell = document.createElement('td');
+                    cell.innerHTML = `${item.name}, <strong>${item.address}</strong>, ${item.city} ${item.state} ${item.zip}`;
+                    const borderColor = stringToColor(item.streetName);
+                    cell.style.borderLeft = `6px solid ${borderColor}`;
+                    row.appendChild(cell);
+                    table.appendChild(row);
+                });
+
+                groupDiv.appendChild(table);
+                canvas.appendChild(groupDiv);
+            }
+            stats.innerHTML = `[${source}] Found ${data.length} records. Skipped ${skippedCount}.`;
+        }
+
+        // --- HELPERS (Address Cleaning) ---
+        async function fetchPropertyData(cleanAddress) {
+            const escaped = cleanAddress.replace(/'/g, "''");
+            const params = new URLSearchParams({
+                // MODIFIED QUERY: Reverted STRICT filter. We now allow ALL results and filter in JS.
+                where: `UPPER(ADDRESS) LIKE UPPER('%${escaped}%') AND JURSCODE = 'PRIN'`,
+                outFields: 'ACCTID,ADDRESS,CITY,ZIPCODE,OWNNAME1,OOI',
+                returnGeometry: 'false',
+                f: 'json',
+                resultRecordCount: '10'
+            });
+            const response = await fetch(`${API_URL}?${params.toString()}`);
+            if (!response.ok) throw new Error("Network response was not ok");
+            return await response.json();
+        }
+
+        function cleanAddressForSearch(rawLine) {
+            let text = rawLine.trim();
+            
+            // TAB DELIMITER FIX:
+            if (text.includes('\t')) {
+                const parts = text.split('\t');
+                if (parts.length >= 2) {
+                    text = `${parts[0].trim()} ${parts[1].trim()}`;
+                } else {
+                    text = parts[0].trim();
+                }
+            }
+            
+            text = text.toUpperCase();
+
+            // 1. Remove MD and Zip Code from end (e.g. " CLINTON MD 20735")
+            // Matches " MD" followed by optional zip, at the end of string
+            text = text.replace(/\s+MD(\s+\d{5}(-\d{4})?)?$/, '');
+
+            // 2. Standardize Directions
+            const directions = {'EAST': 'E', 'WEST': 'W', 'NORTH': 'N', 'SOUTH': 'S', 'NORTHEAST': 'NE', 'NORTHWEST': 'NW', 'SOUTHEAST': 'SE', 'SOUTHWEST': 'SW'};
+            for (const [full, abbr] of Object.entries(directions)) {
+                text = text.replace(new RegExp(`\\b${full}\\b`, 'g'), abbr);
+            }
+
+            // 3. Remove Street Type AND everything after it (City/junk)
+            // This ensures "6601 Horseshoe Rd Clinton" becomes "6601 HORSESHOE"
+            // The API search is a LIKE query, so this broad match is safer.
+            const streetTypes = ['ST', 'STREET', 'AVE', 'AVENUE', 'RD', 'ROAD', 'DR', 'DRIVE', 'CT', 'COURT', 'LN', 'LANE', 'PL', 'PLACE', 'WAY', 'BLVD', 'BOULEVARD', 'CIR', 'CIRCLE', 'TURN', 'TER', 'TERRACE', 'PKWY', 'PARKWAY', 'TRL', 'TRAIL', 'LOOP', 'PATH', 'WALK', 'RUN', 'GLEN', 'GROVE', 'RIDGE', 'HILL', 'VIEW'];
+            
+            // Look for space + TYPE + word boundary. Replace match and rest of string with empty.
+            const typeRegex = new RegExp(`\\s+(${streetTypes.join('|')})\\b.*$`, 'i');
+            text = text.replace(typeRegex, '');
+
+            return text.trim();
+        }
+
+        function removeDirectionals(cleanAddress) {
+            return cleanAddress.replace(/\b(N|S|E|W|NE|NW|SE|SW)\b/g, '').replace(/\s+/g, ' ').trim();
+        }
+
+        function formatApiRecord(attr) {
+            let ownerName = attr.OWNNAME1 || "Unknown";
+            ownerName = ownerName.replace(/\s*ETAL\s*/g, '').replace(/\s*ET\s+AL\s*/g, '').trim();
+            ownerName = ownerName.split('&')[0].trim();
+            if (ownerName && !ownerName.includes(',')) {
+                const parts = ownerName.split(/\s+/);
+                if (parts.length >= 2) {
+                    const last = parts[0];
+                    const rest = parts.slice(1).join(' ');
+                    ownerName = `${rest} ${last}`;
+                }
+            }
+            const addressFull = toTitleCase(attr.ADDRESS || "");
+            return {
+                name: formatName(toTitleCase(ownerName)), 
+                address: addressFull,
+                city: toTitleCase(attr.CITY || ""),
+                state: "MD",
+                zip: attr.ZIPCODE || "",
+                streetName: extractStreetName(addressFull)
+            };
+        }
+
+        function updateProgress(current, total, text = "") {
+            const percent = Math.round((current / total) * 100);
+            document.getElementById('progressBar').style.width = `${percent}%`;
+            document.getElementById('progressPercent').innerText = `${percent}%`;
+            document.getElementById('progressText').innerText = text || `Processed ${current} of ${total}`;
+        }
+
+        function toTitleCase(str) {
+            if (!str) return "";
+            return str.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
+        }
+
+        function extractStreetName(fullAddress) {
+            return fullAddress.replace(/^[0-9]+\s*/, '').trim();
+        }
+
+        function formatName(name) {
+            if (!name) return "";
+            let clean = name.split('&')[0].trim();
+            clean = clean.replace(/ETAL/gi, '').replace(/ET\s+AL/gi, '').trim();
+            clean = clean.replace(/\./g, '');
+            if (clean.includes(',')) {
+                const parts = clean.split(',');
+                if (parts.length >= 2) {
+                    const last = parts[0].trim();
+                    const rest = parts[1].trim(); 
+                    clean = `${rest} ${last}`;
+                }
+            }
+            return toTitleCase(clean);
+        }
+
+        function stringToColor(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            let color = '#';
+            for (let i = 0; i < 3; i++) {
+                let value = (hash >> (i * 8)) & 0xFF;
+                if (value > 200) value = 200; 
+                color += ('00' + value.toString(16)).substr(-2);
+            }
+            return color;
+        }
+    </script>
 </body>
 </html>
