@@ -9,8 +9,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, updateDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signInAnonymously, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, updateDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let firebaseConfig = {
             apiKey: "AIzaSyBM6AeJvD0TpXc-ypHKCuRI7suQLAjcFbI",
@@ -34,6 +34,14 @@
         window.activeBatchId = null; 
         window.dbUnsubscribe = null; 
 
+        // Handle the redirect result when coming back from Google Login
+        getRedirectResult(auth).catch((error) => {
+            if (error.code !== 'auth/no-log-in-methods-selected') {
+                console.error("Redirect Auth Error:", error);
+                showToast("Auth failed. Check browser settings.", 'error');
+            }
+        });
+
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 window.currentUser = user;
@@ -49,16 +57,24 @@
                 if (window.dbUnsubscribe) window.dbUnsubscribe();
                 document.getElementById('login-screen').classList.remove('hidden');
                 document.getElementById('app-content').classList.add('hidden');
+                document.getElementById('btn-save-container').classList.add('hidden');
             }
         });
 
         window.googleLogin = async () => {
             const provider = new GoogleAuthProvider();
+            // This is required to handle COOP policy restrictions across custom domains
+            provider.setCustomParameters({ prompt: 'select_account' });
+            
             try {
                 await setPersistence(auth, browserLocalPersistence);
+                // Attempt popup, but redirect is safer for Cross-Origin-Opener-Policy
                 await signInWithPopup(auth, provider);
             } catch (error) {
-                await signInWithRedirect(auth, provider);
+                console.warn("Auth Policy Block (Popup), switching to Redirect:", error.code);
+                if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+                    await signInWithRedirect(auth, provider);
+                }
             }
         };
 
@@ -68,10 +84,17 @@
         function initDatabaseListener(userId) {
             if (window.dbUnsubscribe) window.dbUnsubscribe();
             const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
+            
+            // Error handling added for ERR_BLOCKED_BY_CLIENT (Ad-blockers)
             window.dbUnsubscribe = onSnapshot(colRef, (snapshot) => {
                 const batches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 batches.sort((a, b) => b.timestamp - a.timestamp);
                 renderDatabaseTable(batches);
+            }, (error) => {
+                console.error("Firestore Listener Blocked:", error);
+                if (error.message.includes('offline')) {
+                    showToast("Database blocked by browser/ad-blocker.", 'error');
+                }
             });
         }
 
@@ -101,9 +124,9 @@
                         groupStrikes: window.currentGroupStrikes,
                         lastUpdated: Date.now()
                     });
-                    showToast("Batch updated successfully!");
+                    showToast("Batch updated!");
                 } catch (e) {
-                    showToast("Update failed: " + e.message, 'error');
+                    showToast("Update failed.", 'error');
                 }
             } else {
                 const batchName = prompt("Enter a name for this batch:", `Batch ${new Date().toLocaleDateString()}`);
@@ -118,15 +141,15 @@
                     });
                     window.activeBatchId = docRef.id;
                     updateSaveButtonUI();
-                    showToast("New batch saved!");
+                    showToast("Batch saved!");
                 } catch (e) {
-                    showToast("Error saving.", 'error');
+                    showToast("Save failed.", 'error');
                 }
             }
         };
 
         window.deleteBatch = async (docId) => {
-            if (!confirm("Are you sure?")) return;
+            if (!confirm("Delete this batch?")) return;
             try {
                 const userId = window.currentUser.uid;
                 await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'data_batches', docId));
@@ -134,9 +157,9 @@
                     window.activeBatchId = null;
                     updateSaveButtonUI();
                 }
-                showToast("Batch deleted.");
+                showToast("Deleted.");
             } catch (e) {
-                showToast("Delete failed.", 'error');
+                showToast("Error deleting.", 'error');
             }
         };
 
@@ -155,7 +178,6 @@
         .group-struck { opacity: 0.3; text-decoration: line-through; filter: grayscale(100%); }
         .tab-active { border-bottom: 2px solid #b91c1c; color: #b91c1c; font-weight: bold; }
         
-        /* Tooltip Container */
         .tooltip { position: relative; display: inline-block; cursor: pointer; }
         .tooltip .tooltiptext {
             visibility: hidden; width: 140px; background-color: #1e293b; color: #fff; text-align: center;
@@ -259,7 +281,7 @@
             <div id="tab-database" class="hidden max-w-5xl mx-auto">
                 <div class="flex justify-between items-center mb-4">
                     <h2 class="font-bold text-slate-800 text-lg">Saved History</h2>
-                    <button onclick="window.refreshDatabase()" class="p-2 text-gray-500 hover:text-red-700 transition">
+                    <button onclick="window.refreshDatabase()" class="p-2 text-gray-500 hover:text-red-700 transition" title="Refresh">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                     </button>
                 </div>
@@ -323,7 +345,6 @@
             window.currentGroupStrikes = new Array(Math.ceil(results.length / 5)).fill(false);
             renderResults(results);
             modal.classList.add('hidden');
-            if(results.length > 0) showToast(`Extracted ${results.length} records.`);
         }
 
         function formatApiRecord(attr) {
@@ -367,7 +388,7 @@
                 div.innerHTML = `
                     <div class="flex justify-between border-b pb-1 mb-2 text-xs font-bold text-gray-400">
                         <span>GROUP ${groupIdx + 1}</span>
-                        <button onclick="toggleStrike(${groupIdx})" class="no-print hover:text-red-700 transition">
+                        <button onclick="toggleStrike(${groupIdx})" class="no-print hover:text-red-700 transition" title="Toggle Strike">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18"></path></svg>
                         </button>
                     </div>
@@ -412,7 +433,6 @@
             renderResults(b.records);
             switchTab('formatter');
             updateSaveButtonUI();
-            showToast(`Loaded ${b.name}`);
         };
     </script>
 </body>
