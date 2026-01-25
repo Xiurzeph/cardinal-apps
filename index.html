@@ -34,14 +34,6 @@
         window.activeBatchId = null; 
         window.dbUnsubscribe = null; 
 
-        // Handle the redirect result when coming back from Google Login
-        getRedirectResult(auth).catch((error) => {
-            if (error.code !== 'auth/no-log-in-methods-selected') {
-                console.error("Redirect Auth Error:", error);
-                showToast("Auth failed. Check browser settings.", 'error');
-            }
-        });
-
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 window.currentUser = user;
@@ -57,24 +49,16 @@
                 if (window.dbUnsubscribe) window.dbUnsubscribe();
                 document.getElementById('login-screen').classList.remove('hidden');
                 document.getElementById('app-content').classList.add('hidden');
-                document.getElementById('btn-save-container').classList.add('hidden');
             }
         });
 
         window.googleLogin = async () => {
             const provider = new GoogleAuthProvider();
-            // This is required to handle COOP policy restrictions across custom domains
-            provider.setCustomParameters({ prompt: 'select_account' });
-            
             try {
                 await setPersistence(auth, browserLocalPersistence);
-                // Attempt popup, but redirect is safer for Cross-Origin-Opener-Policy
                 await signInWithPopup(auth, provider);
             } catch (error) {
-                console.warn("Auth Policy Block (Popup), switching to Redirect:", error.code);
-                if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
-                    await signInWithRedirect(auth, provider);
-                }
+                await signInWithRedirect(auth, provider);
             }
         };
 
@@ -84,17 +68,10 @@
         function initDatabaseListener(userId) {
             if (window.dbUnsubscribe) window.dbUnsubscribe();
             const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
-            
-            // Error handling added for ERR_BLOCKED_BY_CLIENT (Ad-blockers)
             window.dbUnsubscribe = onSnapshot(colRef, (snapshot) => {
                 const batches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 batches.sort((a, b) => b.timestamp - a.timestamp);
                 renderDatabaseTable(batches);
-            }, (error) => {
-                console.error("Firestore Listener Blocked:", error);
-                if (error.message.includes('offline')) {
-                    showToast("Database blocked by browser/ad-blocker.", 'error');
-                }
             });
         }
 
@@ -110,6 +87,13 @@
                 toast.classList.add('opacity-0');
                 setTimeout(() => toast.remove(), 300);
             }, 3000);
+        };
+
+        window.updateSaveButtonUI = () => {
+            const btnText = document.getElementById('btn-save-text');
+            if (btnText) {
+                btnText.innerText = window.activeBatchId ? "Update Batch" : "Save Batch";
+            }
         };
 
         window.saveOrUpdateBatch = async () => {
@@ -140,7 +124,7 @@
                         groupStrikes: window.currentGroupStrikes
                     });
                     window.activeBatchId = docRef.id;
-                    updateSaveButtonUI();
+                    window.updateSaveButtonUI();
                     showToast("Batch saved!");
                 } catch (e) {
                     showToast("Save failed.", 'error');
@@ -155,7 +139,7 @@
                 await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'data_batches', docId));
                 if (window.activeBatchId === docId) {
                     window.activeBatchId = null;
-                    updateSaveButtonUI();
+                    window.updateSaveButtonUI();
                 }
                 showToast("Deleted.");
             } catch (e) {
@@ -164,11 +148,6 @@
         };
 
         window.refreshDatabase = () => { if (window.currentUser) initDatabaseListener(window.currentUser.uid); };
-        
-        function updateSaveButtonUI() {
-            const btnText = document.getElementById('btn-save-text');
-            btnText.innerText = window.activeBatchId ? "Update Batch" : "Save Batch";
-        }
     </script>
     <style>
         @media print { .no-print { display: none !important; } .print-area { width: 100% !important; box-shadow: none !important; margin: 0 !important; } }
@@ -202,7 +181,7 @@
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
                 <span class="font-medium">Sign in with Google</span>
             </button>
-            <button onclick="window.guestLogin()" class="mt-4 text-sm text-gray-400">Continue as Guest</button>
+            <button onclick="window.guestLogin()" class="mt-4 text-sm text-gray-400 hover:text-gray-600">Continue as Guest</button>
         </div>
     </div>
 
@@ -213,12 +192,12 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                 </svg>
             </div>
-            <h2 class="text-xl font-bold text-slate-800 mb-2">Searching API...</h2>
+            <h2 class="text-xl font-bold text-slate-800 mb-2 font-mono tracking-tighter">API LOOKUP</h2>
             <div id="current-search-address" class="text-sm text-slate-500 font-mono mb-6 truncate px-4 italic">---</div>
             <div class="w-full bg-gray-200 rounded-full h-3 mb-2">
                 <div id="modal-progress-bar" class="bg-red-700 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
             </div>
-            <div id="modal-progress-text" class="text-xs font-bold text-red-700 uppercase tracking-tighter">0% Complete</div>
+            <div id="modal-progress-text" class="text-xs font-bold text-red-700 uppercase">0% Complete</div>
         </div>
     </div>
 
@@ -245,7 +224,7 @@
         <main class="flex-1 overflow-auto p-6 bg-slate-50">
             <div id="tab-formatter">
                 <div class="no-print max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-sm border mb-6">
-                    <textarea id="csvInput" class="w-full h-32 p-3 border rounded font-mono text-sm focus:ring-2 focus:ring-red-700 mb-4" placeholder="Paste tabbed addresses here..."></textarea>
+                    <textarea id="csvInput" class="w-full h-32 p-3 border rounded font-mono text-sm focus:ring-2 focus:ring-red-700 mb-4" placeholder="Paste addresses here..."></textarea>
                     <div class="flex justify-between items-center">
                         <div class="flex gap-2 sm:gap-3">
                             <button onclick="runLookupAndFormat()" class="px-4 py-2 bg-red-700 text-white rounded hover:bg-red-800 shadow-sm transition flex items-center gap-2">
@@ -281,7 +260,7 @@
             <div id="tab-database" class="hidden max-w-5xl mx-auto">
                 <div class="flex justify-between items-center mb-4">
                     <h2 class="font-bold text-slate-800 text-lg">Saved History</h2>
-                    <button onclick="window.refreshDatabase()" class="p-2 text-gray-500 hover:text-red-700 transition" title="Refresh">
+                    <button onclick="window.refreshDatabase()" class="p-2 text-gray-500 hover:text-red-700 transition">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                     </button>
                 </div>
@@ -303,7 +282,7 @@
             if (!input) return;
             
             window.activeBatchId = null;
-            updateSaveButtonUI();
+            window.updateSaveButtonUI();
             
             const lines = input.split('\n').filter(l => l.trim());
             const results = [];
@@ -388,7 +367,7 @@
                 div.innerHTML = `
                     <div class="flex justify-between border-b pb-1 mb-2 text-xs font-bold text-gray-400">
                         <span>GROUP ${groupIdx + 1}</span>
-                        <button onclick="toggleStrike(${groupIdx})" class="no-print hover:text-red-700 transition" title="Toggle Strike">
+                        <button onclick="toggleStrike(${groupIdx})" class="no-print hover:text-red-700 transition">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18"></path></svg>
                         </button>
                     </div>
@@ -431,8 +410,8 @@
             window.currentBatchData = b.records;
             window.currentGroupStrikes = b.groupStrikes || new Array(Math.ceil(b.records.length / 5)).fill(false);
             renderResults(b.records);
-            switchTab('formatter');
-            updateSaveButtonUI();
+            window.switchTab('formatter');
+            window.updateSaveButtonUI();
         };
     </script>
 </body>
