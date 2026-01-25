@@ -75,6 +75,21 @@
             });
         }
 
+        // Custom Toast Logic
+        window.showToast = (message, type = 'success') => {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const bgColor = type === 'success' ? 'bg-emerald-600' : 'bg-red-700';
+            toast.className = `${bgColor} text-white px-6 py-3 rounded-lg shadow-xl mb-3 flex items-center gap-3 transform translate-y-10 opacity-0 transition-all duration-300`;
+            toast.innerHTML = `<span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => { toast.classList.remove('translate-y-10', 'opacity-0'); }, 10);
+            setTimeout(() => {
+                toast.classList.add('opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        };
+
         window.saveBatchToDb = async () => {
             if (!window.currentUser || !window.currentBatchData) return;
             const batchName = prompt("Enter a name for this batch:", `Batch ${new Date().toLocaleDateString()}`);
@@ -88,20 +103,21 @@
                     records: window.currentBatchData,
                     groupStrikes: window.currentGroupStrikes
                 });
-                alert("Batch saved!");
+                showToast("Batch saved securely!");
             } catch (e) {
-                alert("Error: " + e.message);
+                showToast("Error: " + e.message, 'error');
             }
         };
 
         window.deleteBatch = async (docId) => {
-            if (!confirm("Are you sure you want to delete this batch?")) return;
+            if (!confirm("Are you sure?")) return;
             try {
                 const userId = window.currentUser.uid;
                 const docRef = doc(db, 'artifacts', appId, 'users', userId, 'data_batches', docId);
                 await deleteDoc(docRef);
+                showToast("Batch deleted.");
             } catch (e) {
-                alert("Delete failed: " + e.message);
+                showToast("Delete failed.", 'error');
             }
         };
 
@@ -114,9 +130,14 @@
         .address-row td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 11pt; }
         .group-struck { opacity: 0.4; text-decoration: line-through; }
         .tab-active { border-bottom: 2px solid #b91c1c; color: #b91c1c; font-weight: bold; }
+        
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-spin-slow { animation: spin 2s linear infinite; }
     </style>
 </head>
-<body class="bg-gray-100 font-sans text-gray-800 h-screen flex flex-col">
+<body class="bg-gray-100 font-sans text-gray-800 h-screen flex flex-col relative">
+
+    <div id="toast-container" class="fixed bottom-6 right-6 z-[200] flex flex-col items-end"></div>
 
     <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900 bg-opacity-70">
         <div class="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center">
@@ -130,11 +151,27 @@
         </div>
     </div>
 
+    <div id="search-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-slate-900 bg-opacity-80 backdrop-blur-sm">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center mx-4">
+            <div class="mb-6 flex justify-center">
+                <svg class="w-12 h-12 text-red-700 animate-spin-slow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+            </div>
+            <h2 class="text-xl font-bold text-slate-800 mb-2">Searching API...</h2>
+            <div id="current-search-address" class="text-sm text-slate-500 font-mono mb-6 truncate px-4">---</div>
+            <div class="w-full bg-gray-200 rounded-full h-3 mb-2">
+                <div id="modal-progress-bar" class="bg-red-700 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+            <div id="modal-progress-text" class="text-xs font-bold text-red-700">0% Complete</div>
+        </div>
+    </div>
+
     <div id="app-content" class="hidden flex-1 flex flex-col">
         <header class="no-print bg-white border-b px-6 py-3 flex justify-between items-center sticky top-0 z-40">
             <div class="flex items-center gap-3">
                 <img src="https://cardinalcomputersystems.com/cardinal-logo.png" class="h-8">
-                <h1 class="font-bold">Cardinal Address Lookup</h1>
+                <h1 class="font-bold hidden sm:block">Cardinal Address Lookup</h1>
             </div>
             <div class="flex items-center gap-6">
                 <nav class="flex gap-4 text-sm font-medium">
@@ -142,8 +179,8 @@
                     <button onclick="switchTab('database')" id="btn-tab-database" class="text-gray-500 py-1">History</button>
                 </nav>
                 <div class="flex items-center gap-3 pl-6 border-l">
-                    <div id="user-display" class="text-xs font-semibold text-slate-700"></div>
-                    <button onclick="window.logout()" class="text-gray-400 hover:text-red-600 transition-colors">
+                    <div id="user-display" class="text-xs font-semibold text-slate-700 hidden lg:block"></div>
+                    <button onclick="window.logout()" class="text-gray-400 hover:text-red-600">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                     </button>
                 </div>
@@ -153,29 +190,34 @@
         <main class="flex-1 overflow-auto p-6 bg-slate-50">
             <div id="tab-formatter">
                 <div class="no-print max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-sm border mb-6">
-                    <textarea id="csvInput" class="w-full h-32 p-3 border rounded font-mono text-sm focus:ring-2 focus:ring-red-700 mb-4" placeholder="Paste addresses here..."></textarea>
+                    <textarea id="csvInput" class="w-full h-32 p-3 border rounded font-mono text-sm focus:ring-2 focus:ring-red-700 mb-4" placeholder="Paste tabbed addresses here..."></textarea>
                     <div class="flex justify-between items-center">
-                        <div class="flex gap-3">
-                            <button onclick="runLookupAndFormat()" class="px-5 py-2 bg-red-700 text-white rounded hover:bg-red-800 shadow-sm transition font-medium">Fetch & Format</button>
+                        <div class="flex gap-2 sm:gap-3">
+                            <button onclick="runLookupAndFormat()" class="px-4 py-2 bg-red-700 text-white rounded hover:bg-red-800 shadow-sm transition flex items-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                <span class="hidden sm:inline">Fetch & Format</span>
+                            </button>
                             <div id="btn-save-container" class="hidden">
-                                <button onclick="window.saveBatchToDb()" class="px-5 py-2 bg-emerald-700 text-white rounded hover:bg-emerald-800 shadow-sm transition font-medium">Save Batch</button>
+                                <button onclick="window.saveBatchToDb()" class="px-4 py-2 bg-emerald-700 text-white rounded hover:bg-emerald-800 transition flex items-center gap-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                                    <span class="hidden sm:inline">Save Batch</span>
+                                </button>
                             </div>
-                            <button onclick="window.print()" class="px-5 py-2 bg-slate-800 text-white rounded">Print PDF</button>
+                            <button onclick="window.print()" class="px-4 py-2 bg-slate-800 text-white rounded hover:bg-slate-900 transition flex items-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                                <span class="hidden sm:inline">Print PDF</span>
+                            </button>
                         </div>
-                        <label class="flex items-center text-sm text-slate-600"><input id="chkOwnerOccupied" type="checkbox" checked class="mr-2 accent-red-700"> Owner-Occupied Only</label>
+                        <label class="flex items-center text-xs sm:text-sm text-slate-600"><input id="chkOwnerOccupied" type="checkbox" checked class="mr-2 accent-red-700"> <span class="hidden xs:inline">Owner-Occupied</span><span class="xs:hidden">H-Only</span></label>
                     </div>
-                    <div id="progress" class="hidden mt-4 h-2 bg-gray-200 rounded-full overflow-hidden">
-                        <div id="progressBar" class="bg-red-700 h-full transition-all" style="width: 0%"></div>
-                    </div>
-                    <div id="stats" class="mt-2 text-right text-xs text-gray-400 h-4"></div>
                 </div>
                 <div id="outputCanvas" class="print-area"></div>
             </div>
 
             <div id="tab-database" class="hidden max-w-5xl mx-auto">
                 <div class="flex justify-between items-center mb-4">
-                    <h2 class="font-bold text-slate-800">Saved History</h2>
-                    <button onclick="window.refreshDatabase()" class="p-2 text-gray-500 hover:text-red-700 transition" title="Refresh">
+                    <h2 class="font-bold text-slate-800 text-lg">Saved History</h2>
+                    <button onclick="window.refreshDatabase()" class="p-2 text-gray-500 hover:text-red-700 transition">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                     </button>
                 </div>
@@ -199,37 +241,43 @@
             const results = [];
             const isStrict = document.getElementById('chkOwnerOccupied').checked;
             
-            document.getElementById('progress').classList.remove('hidden');
-            const bar = document.getElementById('progressBar');
+            const modal = document.getElementById('search-modal');
+            const addrDisplay = document.getElementById('current-search-address');
+            const bar = document.getElementById('modal-progress-bar');
+            const text = document.getElementById('modal-progress-text');
+            modal.classList.remove('hidden');
 
             for (let i = 0; i < lines.length; i++) {
-                const parts = lines[i].split('\t')[0].toUpperCase().trim().split(' ');
-                const houseNum = parts[0];
-                const streetName = parts.slice(1, -1).join(' '); 
-                
-                try {
-                    const params = new URLSearchParams({
-                        where: `PREMSNUM = '${houseNum}' AND UPPER(PREMSNAM) LIKE UPPER('%${streetName}%') AND JURSCODE = 'PRIN'`,
-                        outFields: 'OWNNAME1,OOI,PREMSNUM,PREMSNAM,PREMSTYP,PREMZIP,PREMCITY',
-                        f: 'json',
-                        resultRecordCount: '1'
-                    });
-                    const resp = await fetch(`${API_URL}?${params.toString()}`);
-                    const data = await resp.json();
-                    
-                    if (data.features?.length) {
-                        const attr = isStrict ? data.features.find(f => f.attributes.OOI === 'H')?.attributes : data.features[0].attributes;
-                        if (attr) results.push(formatApiRecord(attr));
-                    }
-                } catch (e) { console.error(e); }
-                bar.style.width = `${((i + 1) / lines.length) * 100}%`;
+                const parts = lines[i].trim().split(/[\t\s]+/).filter(p => p.length > 0);
+                if (parts.length >= 2) {
+                    const houseNum = parts[0];
+                    const streetName = parts[1];
+                    addrDisplay.innerText = `Querying: ${houseNum} ${streetName}`;
+                    const percent = Math.round(((i + 1) / lines.length) * 100);
+                    bar.style.width = `${percent}%`;
+                    text.innerText = `${percent}% Complete`;
+
+                    try {
+                        const params = new URLSearchParams({
+                            where: `PREMSNUM = '${houseNum}' AND UPPER(PREMSNAM) LIKE UPPER('%${streetName.replace(/'/g, "''")}%') AND JURSCODE = 'PRIN'`,
+                            outFields: 'OWNNAME1,OOI,PREMSNUM,PREMSNAM,PREMSTYP,PREMZIP,PREMCITY',
+                            f: 'json',
+                            resultRecordCount: '1'
+                        });
+                        const resp = await fetch(`${API_URL}?${params.toString()}`);
+                        const data = await resp.json();
+                        if (data.features?.length) {
+                            const attr = isStrict ? data.features.find(f => f.attributes.OOI === 'H')?.attributes : data.features[0].attributes;
+                            if (attr) results.push(formatApiRecord(attr));
+                        }
+                    } catch (e) { console.error(e); }
+                }
             }
-            
             window.currentBatchData = results;
             window.currentGroupStrikes = new Array(Math.ceil(results.length / 5)).fill(false);
             renderResults(results);
-            document.getElementById('progress').classList.add('hidden');
-            document.getElementById('stats').innerText = `Found ${results.length} records.`;
+            modal.classList.add('hidden');
+            if(results.length > 0) showToast(`Found ${results.length} properties.`);
         }
 
         function formatApiRecord(attr) {
@@ -273,7 +321,7 @@
                 div.innerHTML = `
                     <div class="flex justify-between border-b pb-1 mb-2 text-xs font-bold text-gray-400">
                         <span>GROUP ${groupIdx + 1}</span>
-                        <button onclick="toggleStrike(${groupIdx})" class="no-print hover:text-red-700">STRIKE</button>
+                        <button onclick="toggleStrike(${groupIdx})" class="no-print hover:text-red-700 transition">STRIKE</button>
                     </div>
                     <table class="address-table w-full">
                         ${group.map(item => `<tr class="address-row"><td style="border-left: 6px solid ${stringToColor(item.streetName)}">
@@ -296,7 +344,7 @@
                 <td class="px-6 py-4 text-slate-700 font-medium">${b.name} <span class="text-[10px] text-gray-400 ml-2">(${new Date(b.timestamp).toLocaleDateString()})</span></td>
                 <td class="px-6 py-4 text-right flex justify-end items-center gap-4">
                     <button onclick="loadBatch(${i})" class="text-red-700 font-bold hover:underline">Load</button>
-                    <button onclick="deleteBatch('${b.id}')" class="text-gray-400 hover:text-red-600 transition" title="Delete">
+                    <button onclick="deleteBatch('${b.id}')" class="text-gray-400 hover:text-red-600 transition">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                     </button>
                 </td></tr>`).join('');
@@ -308,6 +356,7 @@
             window.currentGroupStrikes = b.groupStrikes || new Array(Math.ceil(b.records.length / 5)).fill(false);
             renderResults(b.records);
             switchTab('formatter');
+            showToast(`Loaded ${b.name}`);
         };
     </script>
 </body>
