@@ -50,14 +50,26 @@
         });
 
         window.googleLogin = async () => {
-            const provider = new GoogleAuthProvider();
-            try {
-                await setPersistence(auth, browserLocalPersistence);
-                await signInWithPopup(auth, provider);
-            } catch (error) {
-                await signInWithRedirect(auth, provider);
-            }
-        };
+    const provider = new GoogleAuthProvider();
+    try {
+        // Force local persistence to help with cross-site tracking blocks
+        await setPersistence(auth, browserLocalPersistence);
+        
+        // Try popup first
+        await signInWithPopup(auth, provider);
+    } catch (error) {
+        console.error("Popup failed, switching to redirect:", error.code);
+        
+        // This handles the exact errors you are seeing (popup closed/blocked)
+        if (error.code === 'auth/popup-closed-by-user' || 
+            error.code === 'auth/cancelled-popup-request' ||
+            error.code === 'auth/popup-blocked') {
+            await signInWithRedirect(auth, provider);
+        } else {
+            alert("Login Error: " + error.message);
+        }
+    }
+};
 
         window.guestLogin = async () => { await signInAnonymously(auth); };
         window.logout = () => { signOut(auth); };
