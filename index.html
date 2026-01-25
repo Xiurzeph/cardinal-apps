@@ -7,6 +7,17 @@
     <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
     
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cardinal: '#D92323',
+                    }
+                }
+            }
+        }
+    </script>
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -77,7 +88,7 @@
         window.showToast = (message, type = 'success') => {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
-            const bgColor = type === 'success' ? 'bg-emerald-600' : 'bg-red-700';
+            const bgColor = type === 'success' ? 'bg-emerald-600' : 'bg-cardinal';
             toast.className = `${bgColor} text-white px-6 py-3 rounded-lg shadow-xl mb-3 flex items-center gap-3 transform translate-y-10 opacity-0 transition-all duration-300`;
             toast.innerHTML = `<span>${message}</span>`;
             container.appendChild(toast);
@@ -131,47 +142,46 @@
         @media print { .no-print { display: none !important; } .print-area { width: 100% !important; box-shadow: none !important; margin: 0 !important; } }
         .print-area { width: 8.5in; min-height: 11in; background: white; padding: 0.5in; margin: 20px auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .address-table { width: 100%; border-collapse: separate; border-spacing: 0 4px; }
-        .address-row td { 
-            padding: 12px 16px; 
-            border-bottom: 1px solid #eee; 
-            font-size: 11pt; 
-            white-space: nowrap; 
-            overflow: hidden; 
-            text-overflow: ellipsis; 
-            max-width: 450px; 
-            color: #1e293b;
-        }
+        .address-row td { padding: 12px 16px; border-bottom: 1px solid #eee; font-size: 11pt; }
         .group-struck { opacity: 0.3; text-decoration: line-through; filter: grayscale(100%); }
-        .tab-active { border-bottom: 3px solid #b91c1c; color: #b91c1c; font-weight: 800; }
+        .tab-active { border-bottom: 3px solid #D92323; color: #D92323; font-weight: 800; }
+        
+        .tooltip { position: relative; display: inline-block; cursor: pointer; }
+        .tooltip .tooltiptext {
+            visibility: hidden; width: 160px; background-color: #1e293b; color: #fff; text-align: center;
+            border-radius: 6px; padding: 6px 0; position: absolute; z-index: 50; bottom: 125%; left: 50%;
+            margin-left: -80px; opacity: 0; transition: opacity 0.3s; font-size: 10px; pointer-events: none;
+        }
+        .tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
     </style>
 </head>
-<body class="bg-gray-100 font-sans text-gray-900 h-screen flex flex-col relative">
+<body class="bg-gray-50 font-sans text-gray-900 h-screen flex flex-col relative">
 
     <div id="toast-container" class="fixed bottom-6 right-6 z-[200] flex flex-col items-end"></div>
 
     <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80">
-        <div class="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center mx-4">
+        <div class="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center mx-4 border border-gray-100">
             <img src="https://cardinalcomputersystems.com/cardinal-logo.png" class="h-16 mx-auto mb-4" alt="Cardinal Logo">
             <h1 class="text-2xl font-bold mb-6 text-gray-800">Cardinal Address Lookup</h1>
-            <button onclick="window.googleLogin()" class="w-full py-3 px-4 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 flex items-center justify-center gap-3">
+            <button onclick="window.googleLogin()" class="w-full py-3 px-4 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 flex items-center justify-center gap-3 transition-colors">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
                 <span class="font-medium text-gray-700">Sign in with Google</span>
             </button>
-            <button onclick="window.guestLogin()" class="mt-4 text-sm text-gray-400 hover:text-red-700">Continue as Guest</button>
+            <button onclick="window.guestLogin()" class="mt-4 text-sm text-gray-400 hover:text-cardinal transition-colors">Continue as Guest</button>
         </div>
     </div>
 
-    <div id="search-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+    <div id="search-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
         <div class="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center">
             <div class="mb-6 flex justify-center">
-                <div class="w-12 h-12 border-4 border-red-700 border-t-transparent rounded-full animate-spin"></div>
+                <div class="w-12 h-12 border-4 border-cardinal border-t-transparent rounded-full animate-spin"></div>
             </div>
             <h2 class="text-xl font-bold mb-2 text-gray-800 tracking-tighter uppercase">API Lookup</h2>
             <div id="current-search-address" class="text-sm text-gray-500 font-mono mb-6 truncate px-4 italic">---</div>
             <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
-                <div id="modal-progress-bar" class="bg-red-700 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                <div id="modal-progress-bar" class="bg-cardinal h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
             </div>
-            <div id="modal-progress-text" class="text-[10px] font-bold text-red-700 uppercase tracking-widest">0% Complete</div>
+            <div id="modal-progress-text" class="text-[10px] font-bold text-cardinal uppercase tracking-widest">0% Complete</div>
         </div>
     </div>
 
@@ -184,25 +194,26 @@
             
             <div class="flex items-center gap-6">
                 <nav class="flex gap-6 text-sm font-bold">
-                    <button onclick="switchTab('formatter')" id="btn-tab-formatter" class="tab-active py-1">Formatter</button>
+                    <button onclick="switchTab('formatter')" id="btn-tab-formatter" class="tab-active py-1 transition-colors">Formatter</button>
                     <button onclick="switchTab('database')" id="btn-tab-database" class="text-gray-400 py-1 hover:text-gray-600 transition-colors">History</button>
                 </nav>
                 <div class="flex items-center gap-4 pl-6 border-l border-gray-200">
                     <div id="user-display" class="text-xs font-bold text-gray-500 hidden lg:block"></div>
-                    <button onclick="window.logout()" class="text-gray-400 hover:text-red-700 transition-all">
+                    <button onclick="window.logout()" class="text-gray-400 hover:text-cardinal transition-all">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                     </button>
                 </div>
             </div>
         </header>
 
-        <main class="flex-1 overflow-auto p-4 sm:p-8 bg-gray-100">
+        <main class="flex-1 overflow-auto p-4 sm:p-8 bg-gray-50">
             <div id="tab-formatter">
                 <div class="no-print max-w-4xl mx-auto p-8 bg-white rounded-xl shadow-xl border border-gray-100 mb-8">
-                    <textarea id="csvInput" class="w-full h-32 p-4 bg-gray-50 border border-gray-200 text-gray-800 rounded-lg font-mono text-sm focus:ring-2 focus:ring-red-600 outline-none mb-4" placeholder="Paste addresses here..."></textarea>
+                    <textarea id="csvInput" class="w-full h-32 p-4 bg-gray-50 border border-gray-200 text-gray-800 rounded-lg font-mono text-sm focus:ring-2 focus:ring-cardinal/20 focus:border-cardinal outline-none mb-4 transition-all" placeholder="Paste addresses here..."></textarea>
+                    
                     <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
                         <div class="flex gap-3">
-                            <button onclick="runLookupAndFormat()" class="px-6 py-2.5 bg-red-700 text-white rounded-lg font-bold shadow-lg shadow-red-900/20 hover:bg-red-800 transition-all flex items-center justify-center gap-2">
+                            <button onclick="runLookupAndFormat()" class="px-6 py-2.5 bg-cardinal text-white rounded-lg font-bold shadow-lg shadow-red-900/20 hover:bg-red-800 transition-all flex items-center justify-center gap-2">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                                 <span>Fetch</span>
                             </button>
@@ -218,12 +229,18 @@
                             </button>
                         </div>
                         <div class="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
-                            <input id="chkOwnerOccupied" type="checkbox" checked class="accent-red-700 w-5 h-5 cursor-pointer">
-                            <span class="text-xs font-bold text-gray-500 uppercase">Owner Only</span>
+                            <div class="tooltip">
+                                <svg class="w-5 h-5 text-cardinal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                                <span class="tooltiptext uppercase tracking-widest font-bold">Owner Occupied Only</span>
+                            </div>
+                            <input id="chkOwnerOccupied" type="checkbox" checked class="accent-cardinal w-5 h-5 cursor-pointer">
                         </div>
                     </div>
                 </div>
-                <div id="outputCanvas" class="print-area"></div>
+                
+                <div class="overflow-x-auto rounded-xl shadow-xl border border-gray-200 bg-white">
+                    <div id="outputCanvas" class="print-area min-w-full"></div>
+                </div>
             </div>
 
             <div id="tab-database" class="hidden max-w-5xl mx-auto">
@@ -278,7 +295,19 @@
                         const data = await resp.json();
                         if (data.features?.length) {
                             const attr = isStrict ? data.features.find(f => f.attributes.OOI === 'H')?.attributes : data.features[0].attributes;
-                            if (attr) results.push(formatApiRecord(attr));
+                            
+                            if (attr) {
+                                // -----------------------------------------------------------------
+                                // FILTER: STRICTLY EXCLUDE TRUSTS, REVOCABLE, & BUSINESS ENTITIES
+                                // -----------------------------------------------------------------
+                                const rawName = attr.OWNNAME1 || "";
+                                // EXPANDED EXCLUSION LIST: Includes LIVING, LVG, FAM, PARTNERSHIP
+                                const isExcluded = /TRUST|REVOCABLE|REV\b|TRU\b|TR\b|TTEE|LLC|INC\b|CORP|L\.L\.C|PROPERTIES|LIVING|LVG|FAM|PARTNERSHIP|LTD\b/i.test(rawName);
+
+                                if (!isExcluded) {
+                                    results.push(formatApiRecord(attr));
+                                }
+                            }
                         }
                     } catch (e) { console.error(e); }
                 }
@@ -290,54 +319,98 @@
         }
 
         function formatApiRecord(attr) {
+            const rawName = attr.OWNNAME1 || "Unknown Owner";
             const fullAddr = `${attr.PREMSNUM || ''} ${attr.PREMSNAM || ''} ${attr.PREMSTYP || ''}`.trim();
+
+            const isDeceased = /EST OF|ESTATE| DEC|DECD|DECEASED|ADMIN OF|EXEC OF/i.test(rawName);
+            
+            let status = "Active";
+            if (isDeceased) status = "Deceased";
+
             return {
-                name: cleanName(attr.OWNNAME1 || "Unknown Owner"),
+                name: cleanName(rawName),
+                rawName: rawName,
                 address: toTitleCase(fullAddr),
                 city: toTitleCase(attr.PREMCITY || ""),
                 state: "MD",
                 zip: attr.PREMZIP || "",
-                streetName: toTitleCase(attr.PREMSNAM || "Street")
+                status: status
             };
         }
 
         function cleanName(n) {
-            let res = n.split('&')[0].replace(/ETAL|ET\sAL/gi, '').trim();
+            // Remove legal junk including REVOCABLE/LIVING just in case
+            let res = n.split('&')[0]
+                       .replace(/ETAL|ET\sAL|EST OF|ESTATE| DEC|DECD|REVOCABLE|LIVING|TRUST/gi, '')
+                       .replace(/[^a-zA-Z,\s]/g, '')
+                       .trim();
+            
+            // Handle "LAST, FIRST" -> "FIRST LAST"
             if (res.includes(',')) {
                 const parts = res.split(',');
                 res = `${parts[1].trim()} ${parts[0].trim()}`;
+            } 
+            // Handle "LAST FIRST MI" -> "FIRST MI LAST"
+            else {
+                const parts = res.split(/\s+/);
+                if (parts.length > 1) {
+                    const lastName = parts.shift(); 
+                    res = `${parts.join(' ')} ${lastName}`;
+                }
             }
+
             return toTitleCase(res);
         }
 
         function toTitleCase(s) { return s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()); }
 
-        function stringToColor(s) {
-            let hash = 0;
-            for (let i = 0; i < s.length; i++) hash = s.charCodeAt(i) + ((hash << 5) - hash);
-            return '#' + [0, 8, 16].map(offset => ('00' + Math.min(200, (hash >> offset) & 0xFF).toString(16)).slice(-2)).join('');
-        }
-
+        // ------------------------------------------------------------------
+        // RENDERER: INLINE TEXT FLOW (No Flexbox)
+        // ------------------------------------------------------------------
         function renderResults(data) {
             const canvas = document.getElementById('outputCanvas');
             canvas.innerHTML = '';
-            if (!data || data.length === 0) { canvas.innerHTML = '<div class=\"text-center text-red-700 font-bold p-10 tracking-widest\">0 RECORDS FOUND</div>'; return; }
+            if (!data || data.length === 0) { 
+                canvas.innerHTML = '<div class="text-center text-gray-400 font-bold p-10 uppercase tracking-widest">0 RECORDS FOUND</div>'; 
+                return; 
+            }
+
             for (let i = 0; i < data.length; i += 5) {
                 const groupIdx = i / 5;
                 const group = data.slice(i, i + 5);
                 const div = document.createElement('div');
                 div.className = `mb-8 ${window.currentGroupStrikes[groupIdx] ? 'group-struck' : ''}`;
+                
+                const isStruck = window.currentGroupStrikes[groupIdx];
+                
                 div.innerHTML = `
-                    <div class=\"flex justify-between items-center border-b border-gray-200 pb-1 mb-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest\">
-                        <span>GROUP ${groupIdx + 1}</span>
-                        <button onclick=\"toggleStrike(${groupIdx})\" class=\"no-print p-2 hover:text-red-700 transition-all\">
-                            <svg class=\"w-5 h-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18\"></path></svg>
+                    <div class="flex justify-between items-center border-b border-gray-200 pb-2 mb-2">
+                        <span class="text-xs font-bold text-gray-400 uppercase tracking-widest">GROUP ${groupIdx + 1}</span>
+                        <button onclick="toggleStrike(${groupIdx})" class="p-2 text-cardinal hover:text-red-800 transition-colors no-print" title="${isStruck ? 'Un-strike' : 'Strike Group'}">
+                             ${isStruck 
+                                ? `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18"></path></svg>`
+                                : `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>`
+                            }
                         </button>
                     </div>
-                    <table class=\"address-table\">
-                        ${group.map(item => `<tr class=\"address-row\"><td style=\"border-left: 6px solid ${stringToColor(item.streetName)}\">
-                            ${item.name}, <strong>${item.address}</strong>, ${item.city} ${item.state} ${item.zip}
-                        </td></tr>`).join('')}
+                    <table class="w-full text-left border-collapse">
+                        ${group.map(item => {
+                            let statusColor = '#22c55e'; // Green (Active)
+                            let badgeColor = 'bg-emerald-500';
+                            
+                            if (item.status === 'Deceased') { statusColor = '#ef4444'; badgeColor = 'bg-red-600'; }
+
+                            // INLINE LAYOUT with Comma
+                            return `
+                            <tr class="border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors">
+                                <td class="py-2 px-4 border-l-4" style="border-left-color: ${statusColor}">
+                                    <div class="text-lg text-gray-800">
+                                        <span class="font-bold">${item.name || 'Unknown'}</span>, <span class="text-gray-600 text-base">${item.address || 'Unknown Address'}, ${item.city || ''} ${item.state || 'MD'} ${item.zip || ''}</span>
+                                        ${item.status !== 'Active' ? `<span class="ml-2 px-2 py-0.5 text-[10px] uppercase text-white rounded-full inline-block align-middle ${badgeColor}">${item.status}</span>` : ''}
+                                    </div>
+                                </td>
+                            </tr>`;
+                        }).join('')}
                     </table>`;
                 canvas.appendChild(div);
             }
@@ -353,10 +426,10 @@
 
         window.renderDatabaseTable = (batches) => {
             document.getElementById('db-table-body').innerHTML = batches.map((b, i) => `<tr>
-                <td class=\"px-6 py-4 font-bold text-gray-800\">${b.name} <span class=\"text-[10px] text-gray-400 font-normal ml-2\">${new Date(b.timestamp).toLocaleDateString()}</span></td>
-                <td class=\"px-6 py-4 text-right flex justify-end gap-4\">
-                    <button onclick=\"loadBatch(${i})\" class=\"text-red-700 font-bold hover:underline\">Load</button>
-                    <button onclick=\"deleteBatch('${b.id}')\" class=\"text-gray-400 hover:text-red-600 transition-colors\"><svg class=\"w-5 h-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16\"></path></svg></button>
+                <td class="px-6 py-4 font-bold text-gray-800">${b.name} <span class="text-[10px] text-gray-400 font-normal ml-2">${new Date(b.timestamp).toLocaleDateString()}</span></td>
+                <td class="px-6 py-4 text-right flex justify-end gap-4">
+                    <button onclick="loadBatch(${i})" class="text-cardinal font-bold hover:underline">Load</button>
+                    <button onclick="deleteBatch('${b.id}')" class="text-gray-400 hover:text-red-600 transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
                 </td></tr>`).join('');
             window.allBatches = batches;
         };
