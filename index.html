@@ -31,6 +31,7 @@
         window.currentUser = null;
         window.currentBatchData = null; 
         window.currentGroupStrikes = []; 
+        window.activeBatchId = null; // Track the currently loaded batch ID
         window.dbUnsubscribe = null; 
 
         onAuthStateChanged(auth, (user) => {
@@ -75,7 +76,6 @@
             });
         }
 
-        // Custom Toast Logic
         window.showToast = (message, type = 'success') => {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
@@ -90,22 +90,42 @@
             }, 3000);
         };
 
-        window.saveBatchToDb = async () => {
+        window.saveOrUpdateBatch = async () => {
             if (!window.currentUser || !window.currentBatchData) return;
-            const batchName = prompt("Enter a name for this batch:", `Batch ${new Date().toLocaleDateString()}`);
-            if (!batchName) return;
-            try {
-                const userId = window.currentUser.uid;
-                const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
-                await addDoc(colRef, {
-                    name: batchName,
-                    timestamp: Date.now(),
-                    records: window.currentBatchData,
-                    groupStrikes: window.currentGroupStrikes
-                });
-                showToast("Batch saved securely!");
-            } catch (e) {
-                showToast("Error: " + e.message, 'error');
+            
+            const userId = window.currentUser.uid;
+            
+            if (window.activeBatchId) {
+                // UPDATE EXISTING BATCH
+                try {
+                    const docRef = doc(db, 'artifacts', appId, 'users', userId, 'data_batches', window.activeBatchId);
+                    await updateDoc(docRef, {
+                        records: window.currentBatchData,
+                        groupStrikes: window.currentGroupStrikes,
+                        lastUpdated: Date.now()
+                    });
+                    showToast("Batch updated successfully!");
+                } catch (e) {
+                    showToast("Update failed: " + e.message, 'error');
+                }
+            } else {
+                // SAVE NEW BATCH
+                const batchName = prompt("Enter a name for this batch:", `Batch ${new Date().toLocaleDateString()}`);
+                if (!batchName) return;
+                try {
+                    const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
+                    const docRef = await addDoc(colRef, {
+                        name: batchName,
+                        timestamp: Date.now(),
+                        records: window.currentBatchData,
+                        groupStrikes: window.currentGroupStrikes
+                    });
+                    window.activeBatchId = docRef.id;
+                    updateSaveButtonText();
+                    showToast("New batch saved!");
+                } catch (e) {
+                    showToast("Error: " + e.message, 'error');
+                }
             }
         };
 
@@ -115,6 +135,10 @@
                 const userId = window.currentUser.uid;
                 const docRef = doc(db, 'artifacts', appId, 'users', userId, 'data_batches', docId);
                 await deleteDoc(docRef);
+                if (window.activeBatchId === docId) {
+                    window.activeBatchId = null;
+                    updateSaveButtonText();
+                }
                 showToast("Batch deleted.");
             } catch (e) {
                 showToast("Delete failed.", 'error');
@@ -122,13 +146,18 @@
         };
 
         window.refreshDatabase = () => { if (window.currentUser) initDatabaseListener(window.currentUser.uid); };
+        
+        function updateSaveButtonText() {
+            const btnText = document.getElementById('btn-save-text');
+            btnText.innerText = window.activeBatchId ? "Update Batch" : "Save Batch";
+        }
     </script>
     <style>
         @media print { .no-print { display: none !important; } .print-area { width: 100% !important; box-shadow: none !important; margin: 0 !important; } }
         .print-area { width: 8.5in; min-height: 11in; background: white; padding: 0.5in; margin: 20px auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .address-table { width: 100%; border-collapse: separate; border-spacing: 0 4px; }
         .address-row td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 11pt; }
-        .group-struck { opacity: 0.4; text-decoration: line-through; }
+        .group-struck { opacity: 0.3; text-decoration: line-through; filter: grayscale(100%); }
         .tab-active { border-bottom: 2px solid #b91c1c; color: #b91c1c; font-weight: bold; }
         
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -142,12 +171,12 @@
     <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900 bg-opacity-70">
         <div class="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center">
             <img src="https://cardinalcomputersystems.com/cardinal-logo.png" class="h-16 mx-auto mb-4">
-            <h1 class="text-2xl font-bold mb-6">Cardinal Address Lookup</h1>
+            <h1 class="text-2xl font-bold mb-6 text-slate-800">Cardinal Address Lookup</h1>
             <button onclick="window.googleLogin()" class="w-full py-3 px-4 bg-white border rounded-lg shadow-sm hover:bg-gray-50 flex items-center justify-center gap-3">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
-                <span class="font-medium">Sign in with Google</span>
+                <span class="font-medium text-slate-700">Sign in with Google</span>
             </button>
-            <button onclick="window.guestLogin()" class="mt-4 text-sm text-gray-400">Continue as Guest</button>
+            <button onclick="window.guestLogin()" class="mt-4 text-sm text-gray-400 hover:text-gray-600">Continue as Guest</button>
         </div>
     </div>
 
@@ -171,7 +200,7 @@
         <header class="no-print bg-white border-b px-6 py-3 flex justify-between items-center sticky top-0 z-40">
             <div class="flex items-center gap-3">
                 <img src="https://cardinalcomputersystems.com/cardinal-logo.png" class="h-8">
-                <h1 class="font-bold hidden sm:block">Cardinal Address Lookup</h1>
+                <h1 class="font-bold hidden sm:block text-slate-800">Cardinal Address Lookup</h1>
             </div>
             <div class="flex items-center gap-6">
                 <nav class="flex gap-4 text-sm font-medium">
@@ -180,7 +209,7 @@
                 </nav>
                 <div class="flex items-center gap-3 pl-6 border-l">
                     <div id="user-display" class="text-xs font-semibold text-slate-700 hidden lg:block"></div>
-                    <button onclick="window.logout()" class="text-gray-400 hover:text-red-600">
+                    <button onclick="window.logout()" class="text-gray-400 hover:text-red-600 transition-colors">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                     </button>
                 </div>
@@ -190,7 +219,7 @@
         <main class="flex-1 overflow-auto p-6 bg-slate-50">
             <div id="tab-formatter">
                 <div class="no-print max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-sm border mb-6">
-                    <textarea id="csvInput" class="w-full h-32 p-3 border rounded font-mono text-sm focus:ring-2 focus:ring-red-700 mb-4" placeholder="Paste tabbed addresses here..."></textarea>
+                    <textarea id="csvInput" class="w-full h-32 p-3 border rounded font-mono text-sm focus:ring-2 focus:ring-red-700 mb-4" placeholder="Paste addresses here..."></textarea>
                     <div class="flex justify-between items-center">
                         <div class="flex gap-2 sm:gap-3">
                             <button onclick="runLookupAndFormat()" class="px-4 py-2 bg-red-700 text-white rounded hover:bg-red-800 shadow-sm transition flex items-center gap-2">
@@ -198,9 +227,9 @@
                                 <span class="hidden sm:inline">Fetch & Format</span>
                             </button>
                             <div id="btn-save-container" class="hidden">
-                                <button onclick="window.saveBatchToDb()" class="px-4 py-2 bg-emerald-700 text-white rounded hover:bg-emerald-800 transition flex items-center gap-2">
+                                <button onclick="window.saveOrUpdateBatch()" class="px-4 py-2 bg-emerald-700 text-white rounded hover:bg-emerald-800 transition flex items-center gap-2">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
-                                    <span class="hidden sm:inline">Save Batch</span>
+                                    <span id="btn-save-text" class="hidden sm:inline">Save Batch</span>
                                 </button>
                             </div>
                             <button onclick="window.print()" class="px-4 py-2 bg-slate-800 text-white rounded hover:bg-slate-900 transition flex items-center gap-2">
@@ -208,16 +237,18 @@
                                 <span class="hidden sm:inline">Print PDF</span>
                             </button>
                         </div>
-                        <label class="flex items-center text-xs sm:text-sm text-slate-600"><input id="chkOwnerOccupied" type="checkbox" checked class="mr-2 accent-red-700"> <span class="hidden xs:inline">Owner-Occupied</span><span class="xs:hidden">H-Only</span></label>
+                        <label class="flex items-center text-xs sm:text-sm text-slate-600"><input id="chkOwnerOccupied" type="checkbox" checked class="mr-2 accent-red-700"> <span class="hidden xs:inline text-slate-700">Owner-Occupied</span><span class="xs:hidden">H-Only</span></label>
                     </div>
                 </div>
-                <div id="outputCanvas" class="print-area"></div>
+                <div id="outputCanvas" class="print-area">
+                    <div class="text-center text-gray-400 mt-20 italic">Results will appear here...</div>
+                </div>
             </div>
 
             <div id="tab-database" class="hidden max-w-5xl mx-auto">
                 <div class="flex justify-between items-center mb-4">
                     <h2 class="font-bold text-slate-800 text-lg">Saved History</h2>
-                    <button onclick="window.refreshDatabase()" class="p-2 text-gray-500 hover:text-red-700 transition">
+                    <button onclick="window.refreshDatabase()" class="p-2 text-gray-500 hover:text-red-700 transition" title="Refresh">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                     </button>
                 </div>
@@ -237,6 +268,9 @@
         async function runLookupAndFormat() {
             const input = document.getElementById('csvInput').value.trim();
             if (!input) return;
+            window.activeBatchId = null; // Clear ID on new run
+            updateSaveButtonText();
+            
             const lines = input.split('\n').filter(l => l.trim());
             const results = [];
             const isStrict = document.getElementById('chkOwnerOccupied').checked;
@@ -312,7 +346,7 @@
         function renderResults(data) {
             const canvas = document.getElementById('outputCanvas');
             canvas.innerHTML = '';
-            if (data.length === 0) { canvas.innerHTML = '<div class="text-center text-red-500 mt-10">No records found.</div>'; return; }
+            if (!data || data.length === 0) { canvas.innerHTML = '<div class="text-center text-red-500 mt-10">No records found.</div>'; return; }
             for (let i = 0; i < data.length; i += 5) {
                 const groupIdx = i / 5;
                 const group = data.slice(i, i + 5);
@@ -321,7 +355,9 @@
                 div.innerHTML = `
                     <div class="flex justify-between border-b pb-1 mb-2 text-xs font-bold text-gray-400">
                         <span>GROUP ${groupIdx + 1}</span>
-                        <button onclick="toggleStrike(${groupIdx})" class="no-print hover:text-red-700 transition">STRIKE</button>
+                        <button onclick="toggleStrike(${groupIdx})" class="no-print hover:text-red-700 transition" title="Toggle Strike">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18"></path></svg>
+                        </button>
                     </div>
                     <table class="address-table w-full">
                         ${group.map(item => `<tr class="address-row"><td style="border-left: 6px solid ${stringToColor(item.streetName)}">
@@ -332,13 +368,18 @@
             }
         }
 
-        window.toggleStrike = (idx) => { window.currentGroupStrikes[idx] = !window.currentGroupStrikes[idx]; renderResults(window.currentBatchData); };
+        window.toggleStrike = (idx) => { 
+            window.currentGroupStrikes[idx] = !window.currentGroupStrikes[idx]; 
+            renderResults(window.currentBatchData); 
+        };
+
         window.switchTab = (t) => {
             document.getElementById('tab-formatter').classList.toggle('hidden', t !== 'formatter');
             document.getElementById('tab-database').classList.toggle('hidden', t !== 'database');
             document.getElementById('btn-tab-formatter').className = t === 'formatter' ? 'tab-active py-1' : 'text-gray-500 py-1';
             document.getElementById('btn-tab-database').className = t === 'database' ? 'tab-active py-1' : 'text-gray-500 py-1';
         };
+
         window.renderDatabaseTable = (batches) => {
             document.getElementById('db-table-body').innerHTML = batches.map((b, i) => `<tr>
                 <td class="px-6 py-4 text-slate-700 font-medium">${b.name} <span class="text-[10px] text-gray-400 ml-2">(${new Date(b.timestamp).toLocaleDateString()})</span></td>
@@ -350,12 +391,15 @@
                 </td></tr>`).join('');
             window.allBatches = batches;
         };
+
         window.loadBatch = (i) => {
             const b = window.allBatches[i];
+            window.activeBatchId = b.id; // Link to the original file ID
             window.currentBatchData = b.records;
             window.currentGroupStrikes = b.groupStrikes || new Array(Math.ceil(b.records.length / 5)).fill(false);
             renderResults(b.records);
             switchTab('formatter');
+            updateSaveButtonText();
             showToast(`Loaded ${b.name}`);
         };
     </script>
