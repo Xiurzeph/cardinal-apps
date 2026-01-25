@@ -31,7 +31,6 @@
         window.currentUser = null;
         window.currentBatchData = null; 
         window.currentGroupStrikes = []; 
-        window.currentBatchId = null; 
         window.dbUnsubscribe = null; 
 
         onAuthStateChanged(auth, (user) => {
@@ -80,7 +79,6 @@
             if (!window.currentUser || !window.currentBatchData) return;
             const batchName = prompt("Enter a name for this batch:", `Batch ${new Date().toLocaleDateString()}`);
             if (!batchName) return;
-
             try {
                 const userId = window.currentUser.uid;
                 const colRef = collection(db, 'artifacts', appId, 'users', userId, 'data_batches');
@@ -90,21 +88,27 @@
                     records: window.currentBatchData,
                     groupStrikes: window.currentGroupStrikes
                 });
-                alert("Batch saved successfully!");
+                alert("Batch saved!");
             } catch (e) {
-                alert("Error saving: " + e.message);
+                alert("Error: " + e.message);
             }
         };
 
-        window.refreshDatabase = () => {
-            if (window.currentUser) initDatabaseListener(window.currentUser.uid);
+        window.deleteBatch = async (docId) => {
+            if (!confirm("Are you sure you want to delete this batch?")) return;
+            try {
+                const userId = window.currentUser.uid;
+                const docRef = doc(db, 'artifacts', appId, 'users', userId, 'data_batches', docId);
+                await deleteDoc(docRef);
+            } catch (e) {
+                alert("Delete failed: " + e.message);
+            }
         };
+
+        window.refreshDatabase = () => { if (window.currentUser) initDatabaseListener(window.currentUser.uid); };
     </script>
     <style>
-        @media print {
-            .no-print { display: none !important; }
-            .print-area { width: 100% !important; box-shadow: none !important; margin: 0 !important; }
-        }
+        @media print { .no-print { display: none !important; } .print-area { width: 100% !important; box-shadow: none !important; margin: 0 !important; } }
         .print-area { width: 8.5in; min-height: 11in; background: white; padding: 0.5in; margin: 20px auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .address-table { width: 100%; border-collapse: separate; border-spacing: 0 4px; }
         .address-row td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 11pt; }
@@ -117,7 +121,7 @@
     <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900 bg-opacity-70">
         <div class="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center">
             <img src="https://cardinalcomputersystems.com/cardinal-logo.png" class="h-16 mx-auto mb-4">
-            <h1 class="text-2xl font-bold mb-6 text-slate-800">Cardinal Address Lookup</h1>
+            <h1 class="text-2xl font-bold mb-6">Cardinal Address Lookup</h1>
             <button onclick="window.googleLogin()" class="w-full py-3 px-4 bg-white border rounded-lg shadow-sm hover:bg-gray-50 flex items-center justify-center gap-3">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
                 <span class="font-medium">Sign in with Google</span>
@@ -130,9 +134,8 @@
         <header class="no-print bg-white border-b px-6 py-3 flex justify-between items-center sticky top-0 z-40">
             <div class="flex items-center gap-3">
                 <img src="https://cardinalcomputersystems.com/cardinal-logo.png" class="h-8">
-                <h1 class="font-bold text-slate-800">Cardinal Address Lookup</h1>
+                <h1 class="font-bold">Cardinal Address Lookup</h1>
             </div>
-            
             <div class="flex items-center gap-6">
                 <nav class="flex gap-4 text-sm font-medium">
                     <button onclick="switchTab('formatter')" id="btn-tab-formatter" class="tab-active py-1">Formatter</button>
@@ -151,26 +154,22 @@
             <div id="tab-formatter">
                 <div class="no-print max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-sm border mb-6">
                     <textarea id="csvInput" class="w-full h-32 p-3 border rounded font-mono text-sm focus:ring-2 focus:ring-red-700 mb-4" placeholder="Paste addresses here..."></textarea>
-                    
                     <div class="flex justify-between items-center">
                         <div class="flex gap-3">
                             <button onclick="runLookupAndFormat()" class="px-5 py-2 bg-red-700 text-white rounded hover:bg-red-800 shadow-sm transition font-medium">Fetch & Format</button>
                             <div id="btn-save-container" class="hidden">
-                                <button onclick="window.saveBatchToDb()" class="px-5 py-2 bg-emerald-700 text-white rounded hover:bg-emerald-800 transition font-medium">Save Batch</button>
+                                <button onclick="window.saveBatchToDb()" class="px-5 py-2 bg-emerald-700 text-white rounded hover:bg-emerald-800 shadow-sm transition font-medium">Save Batch</button>
                             </div>
-                            <button onclick="window.print()" class="px-5 py-2 bg-slate-800 text-white rounded hover:bg-slate-900 transition font-medium">Print PDF</button>
+                            <button onclick="window.print()" class="px-5 py-2 bg-slate-800 text-white rounded">Print PDF</button>
                         </div>
                         <label class="flex items-center text-sm text-slate-600"><input id="chkOwnerOccupied" type="checkbox" checked class="mr-2 accent-red-700"> Owner-Occupied Only</label>
                     </div>
-                    
                     <div id="progress" class="hidden mt-4 h-2 bg-gray-200 rounded-full overflow-hidden">
                         <div id="progressBar" class="bg-red-700 h-full transition-all" style="width: 0%"></div>
                     </div>
                     <div id="stats" class="mt-2 text-right text-xs text-gray-400 h-4"></div>
                 </div>
-                <div id="outputCanvas" class="print-area">
-                    <div class="text-center text-gray-400 mt-20 italic">Results will appear here...</div>
-                </div>
+                <div id="outputCanvas" class="print-area"></div>
             </div>
 
             <div id="tab-database" class="hidden max-w-5xl mx-auto">
@@ -181,10 +180,8 @@
                     </button>
                 </div>
                 <div class="bg-white rounded-lg border overflow-hidden shadow-sm">
-                    <table class="min-w-full divide-y">
-                        <thead class="bg-gray-50">
-                            <tr><th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Batch Name</th><th class="px-6 py-3 text-right">Actions</th></tr>
-                        </thead>
+                    <table class="min-w-full divide-y text-sm">
+                        <thead class="bg-gray-50"><tr><th class="px-6 py-3 text-left font-medium text-gray-500 uppercase">Batch Name</th><th class="px-6 py-3 text-right">Actions</th></tr></thead>
                         <tbody id="db-table-body" class="divide-y"></tbody>
                     </table>
                 </div>
@@ -206,14 +203,16 @@
             const bar = document.getElementById('progressBar');
 
             for (let i = 0; i < lines.length; i++) {
-                const search = lines[i].split('\t')[0].toUpperCase().replace(/\s+MD(\s+\d{5})?$/, '').trim();
-                const streetOnly = search.split(' ').slice(-1)[0]; 
+                const parts = lines[i].split('\t')[0].toUpperCase().trim().split(' ');
+                const houseNum = parts[0];
+                const streetName = parts.slice(1, -1).join(' '); 
+                
                 try {
                     const params = new URLSearchParams({
-                        where: `(UPPER(ADDRESS) LIKE UPPER('%${search.replace(/'/g, "''")}%') OR UPPER(PREMSNAM) LIKE UPPER('%${streetOnly.replace(/'/g, "''")}%')) AND JURSCODE = 'PRIN'`,
+                        where: `PREMSNUM = '${houseNum}' AND UPPER(PREMSNAM) LIKE UPPER('%${streetName}%') AND JURSCODE = 'PRIN'`,
                         outFields: 'OWNNAME1,OOI,PREMSNUM,PREMSNAM,PREMSTYP,PREMZIP,PREMCITY',
                         f: 'json',
-                        resultRecordCount: '3'
+                        resultRecordCount: '1'
                     });
                     const resp = await fetch(`${API_URL}?${params.toString()}`);
                     const data = await resp.json();
@@ -236,7 +235,7 @@
         function formatApiRecord(attr) {
             const fullAddr = `${attr.PREMSNUM || ''} ${attr.PREMSNAM || ''} ${attr.PREMSTYP || ''}`.trim();
             return {
-                name: cleanName(attr.OWNNAME1 || "Unknown Owner"),
+                name: cleanName(attr.OWNNAME1 || "Unknown"),
                 address: toTitleCase(fullAddr),
                 city: toTitleCase(attr.PREMCITY || ""),
                 state: "MD",
@@ -265,10 +264,7 @@
         function renderResults(data) {
             const canvas = document.getElementById('outputCanvas');
             canvas.innerHTML = '';
-            if (data.length === 0) {
-                canvas.innerHTML = '<div class="text-center text-red-500 mt-10">0 Records Found. Ensure your address list contains Prince George\'s County properties.</div>';
-                return;
-            }
+            if (data.length === 0) { canvas.innerHTML = '<div class="text-center text-red-500 mt-10">No records found.</div>'; return; }
             for (let i = 0; i < data.length; i += 5) {
                 const groupIdx = i / 5;
                 const group = data.slice(i, i + 5);
@@ -280,41 +276,32 @@
                         <button onclick="toggleStrike(${groupIdx})" class="no-print hover:text-red-700">STRIKE</button>
                     </div>
                     <table class="address-table w-full">
-                        ${group.map(item => `
-                            <tr class="address-row">
-                                <td style="border-left: 6px solid ${stringToColor(item.streetName)}">
-                                    ${item.name}, <strong>${item.address}</strong>, ${item.city} ${item.state} ${item.zip}
-                                </td>
-                            </tr>`).join('')}
+                        ${group.map(item => `<tr class="address-row"><td style="border-left: 6px solid ${stringToColor(item.streetName)}">
+                            ${item.name}, <strong>${item.address}</strong>, ${item.city} ${item.state} ${item.zip}
+                        </td></tr>`).join('')}
                     </table>`;
                 canvas.appendChild(div);
             }
         }
 
-        window.toggleStrike = (idx) => {
-            window.currentGroupStrikes[idx] = !window.currentGroupStrikes[idx];
-            renderResults(window.currentBatchData);
-        };
-
+        window.toggleStrike = (idx) => { window.currentGroupStrikes[idx] = !window.currentGroupStrikes[idx]; renderResults(window.currentBatchData); };
         window.switchTab = (t) => {
             document.getElementById('tab-formatter').classList.toggle('hidden', t !== 'formatter');
             document.getElementById('tab-database').classList.toggle('hidden', t !== 'database');
             document.getElementById('btn-tab-formatter').className = t === 'formatter' ? 'tab-active py-1' : 'text-gray-500 py-1';
             document.getElementById('btn-tab-database').className = t === 'database' ? 'tab-active py-1' : 'text-gray-500 py-1';
         };
-
         window.renderDatabaseTable = (batches) => {
-            const body = document.getElementById('db-table-body');
-            body.innerHTML = batches.map((b, i) => `
-                <tr>
-                    <td class="px-6 py-4 text-sm">${b.name} (${new Date(b.timestamp).toLocaleDateString()})</td>
-                    <td class="px-6 py-4 text-right">
-                        <button onclick="loadBatch(${i})" class="text-red-700 font-bold hover:underline">Load</button>
-                    </td>
-                </tr>`).join('');
+            document.getElementById('db-table-body').innerHTML = batches.map((b, i) => `<tr>
+                <td class="px-6 py-4 text-slate-700 font-medium">${b.name} <span class="text-[10px] text-gray-400 ml-2">(${new Date(b.timestamp).toLocaleDateString()})</span></td>
+                <td class="px-6 py-4 text-right flex justify-end items-center gap-4">
+                    <button onclick="loadBatch(${i})" class="text-red-700 font-bold hover:underline">Load</button>
+                    <button onclick="deleteBatch('${b.id}')" class="text-gray-400 hover:text-red-600 transition" title="Delete">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </td></tr>`).join('');
             window.allBatches = batches;
         };
-
         window.loadBatch = (i) => {
             const b = window.allBatches[i];
             window.currentBatchData = b.records;
