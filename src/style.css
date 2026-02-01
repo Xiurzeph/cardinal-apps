@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom Tooltip Logic */
+.tooltip {
+  @apply relative inline-block cursor-pointer;
+}
+
+.tooltip .tooltiptext {
+  @apply invisible w-40 bg-slate-800 text-white text-center rounded py-1.5 absolute z-50 bottom-[125%] left-1/2 -ml-20 opacity-0 transition-opacity duration-300 text-[10px] pointer-events-none;
+}
+
+.tooltip:hover .tooltiptext {
+  @apply visible opacity-100;
+}
+
+/* Print Styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-area {
+    width: 100% !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  body, #app-content, main {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+}
+
+/* Custom Table Styles */
+.group-struck {
+  @apply opacity-30 line-through grayscale;
+}
+
+.tab-active {
+  @apply border-b-[3px] border-cardinal text-cardinal font-extrabold;
+}
