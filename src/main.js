@@ -24,12 +24,12 @@ import {
 
 // --- Configuration ---
 const firebaseConfig = {
-    apiKey: "AIzaSyBM6AeJvD0TpXc-ypHKCuRI7suQLAjcFbI",
-    authDomain: "auth.cardinalcomputersystems.com",
-    projectId: "cardinal-address",
-    storageBucket: "cardinal-address.firebasestorage.app",
-    messagingSenderId: "286969027972",
-    appId: "1:286969027972:web:95b5e707cd5a02d6a0d1d1"
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const appId = 'cardinal-address-lookup';
