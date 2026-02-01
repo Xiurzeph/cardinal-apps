@@ -1,0 +1,21 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependency directories
+node_modules/
+
+# Optional: Production build folder (Usually you don't commit this for Vite apps)
+dist/
+
+# System Files
+.DS_Store
+Thumbs.db
+
+
+# Editor directories
+.vscode/
+.idea/
+.env
+.env.local

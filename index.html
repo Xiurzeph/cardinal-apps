@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cardinal Address Lookup</title>
+    <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
+  <script type="module" crossorigin src="/assets/index-CNvNP_vM.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BW7Q-glC.css">
+</head>
+<body class="bg-gray-50 font-sans text-gray-900 h-screen flex flex-col relative">
+
+    <div id="toast-container" class="fixed bottom-6 right-6 z-[200] flex flex-col items-end"></div>
+
+    <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80">
+        <div class="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center mx-4 border border-gray-100">
+            <img src="https://cardinalcomputersystems.com/cardinal-logo.png" class="h-16 mx-auto mb-4" alt="Cardinal Logo">
+            <h1 class="text-2xl font-bold mb-6 text-gray-800">Cardinal Address Lookup</h1>
+            <button onclick="window.googleLogin()" class="w-full py-3 px-4 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 flex items-center justify-center gap-3 transition-colors">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5">
+                <span class="font-medium text-gray-700">Sign in with Google</span>
+            </button>
+            <button onclick="window.guestLogin()" class="mt-4 text-sm text-gray-400 hover:text-cardinal transition-colors">Continue as Guest</button>
+        </div>
+    </div>
+
+    <div id="search-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center">
+            <div class="mb-6 flex justify-center">
+                <div class="w-12 h-12 border-4 border-cardinal border-t-transparent rounded-full animate-spin"></div>
+            </div>
+            <h2 class="text-xl font-bold mb-2 text-gray-800 tracking-tighter uppercase">API Lookup</h2>
+            <div id="current-search-address" class="text-sm text-gray-500 font-mono mb-6 truncate px-4 italic">---</div>
+            <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
+                <div id="modal-progress-bar" class="bg-cardinal h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+            <div id="modal-progress-text" class="text-[10px] font-bold text-cardinal uppercase tracking-widest">0% Complete</div>
+        </div>
+    </div>
+
+    <div id="app-content" class="hidden flex-1 flex flex-col">
+        <header class="no-print bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center sticky top-0 z-40 shadow-sm">
+            <div class="flex items-center gap-3">
+                <img src="https://cardinalcomputersystems.com/cardinal-logo.png" class="h-8 w-auto" alt="Cardinal Logo">
+                <h1 class="font-bold hidden sm:block tracking-tight text-gray-800">Cardinal Address Lookup</h1>
+            </div>
+            
+            <div class="flex items-center gap-6">
+                <nav class="flex gap-6 text-sm font-bold">
+                    <button onclick="window.switchTab('formatter')" id="btn-tab-formatter" class="tab-active py-1 transition-colors">Formatter</button>
+                    <button onclick="window.switchTab('database')" id="btn-tab-database" class="text-gray-400 py-1 hover:text-gray-600 transition-colors">History</button>
+                </nav>
+                <div class="flex items-center gap-4 pl-6 border-l border-gray-200">
+                    <div id="user-display" class="text-xs font-bold text-gray-500 hidden lg:block"></div>
+                    <button onclick="window.logout()" class="text-gray-400 hover:text-cardinal transition-all">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="flex-1 overflow-auto p-4 sm:p-8 bg-gray-50">
+            <div id="tab-formatter">
+                <div class="no-print max-w-4xl mx-auto p-8 bg-white rounded-xl shadow-xl border border-gray-100 mb-8">
+                    <textarea id="csvInput" class="w-full h-32 p-4 bg-gray-50 border border-gray-200 text-gray-800 rounded-lg font-mono text-sm focus:ring-2 focus:ring-cardinal/20 focus:border-cardinal outline-none mb-4 transition-all" placeholder="Paste addresses here..."></textarea>
+                    
+                    <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <div class="flex gap-3">
+                            <button onclick="window.runLookupAndFormat()" class="px-6 py-2.5 bg-cardinal text-white rounded-lg font-bold shadow-lg shadow-red-900/20 hover:bg-red-800 transition-all flex items-center justify-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                <span>Fetch</span>
+                            </button>
+                            <div id="btn-save-container" class="hidden">
+                                <button onclick="window.saveOrUpdateBatch()" class="px-6 py-2.5 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                                    <span id="btn-save-text">Save</span>
+                                </button>
+                            </div>
+                            <button onclick="window.print()" class="px-6 py-2.5 bg-gray-800 text-white rounded-lg font-bold hover:bg-gray-900 transition-all flex items-center justify-center gap-2 shadow-lg">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                                <span>Print</span>
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
+                            <div class="tooltip">
+                                <svg class="w-5 h-5 text-cardinal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                                <span class="tooltiptext uppercase tracking-widest font-bold">Owner Occupied Only</span>
+                            </div>
+                            <input id="chkOwnerOccupied" type="checkbox" checked class="accent-cardinal w-5 h-5 cursor-pointer">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="overflow-x-auto rounded-xl shadow-xl border border-gray-200 bg-white">
+                    <div id="outputCanvas" class="print-area min-w-full"></div>
+                </div>
+            </div>
+
+            <div id="tab-database" class="hidden max-w-5xl mx-auto">
+                <div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                    <table class="min-w-full divide-y divide-gray-100">
+                        <thead class="bg-gray-50 text-gray-400 uppercase text-[10px] tracking-widest font-bold">
+                            <tr><th class="px-6 py-4 text-left">Batch Name</th><th class="px-6 py-4 text-right">Actions</th></tr>
+                        </thead>
+                        <tbody id="db-table-body" class="divide-y divide-gray-100"></tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+</body>
+</html>
