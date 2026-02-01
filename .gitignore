@@ -13,6 +13,9 @@ dist/
 .DS_Store
 Thumbs.db
 
+
 # Editor directories
 .vscode/
 .idea/
+.env
+.env.local
