@@ -169,22 +169,26 @@ window.runLookupAndFormat = async () => {
             try {
                 const params = new URLSearchParams({
                     where: `PREMSNUM = '${houseNum}' AND UPPER(PREMSNAM) LIKE UPPER('%${streetName.replace(/'/g, "''")}%') AND JURSCODE = 'PRIN'`,
-                    outFields: 'OWNNAME1,OOI,PREMSNUM,PREMSNAM,PREMSTYP,PREMZIP,PREMCITY',
+                    outFields: 'OOI,PREMSNUM,PREMSNAM,PREMSTYP,PREMZIP,PREMCITY,EXCLASS',
                     f: 'json',
-                    resultRecordCount: '1'
+                    resultRecordCount: '10'
                 });
                 const resp = await fetch(`${API_URL}?${params.toString()}`);
                 const data = await resp.json();
+                
                 if (data.features?.length) {
-                    const attr = isStrict ? data.features.find(f => f.attributes.OOI === 'H')?.attributes : data.features[0].attributes;
+                    // Find the valid target based on strict owner-occupied and standard taxable filters
+                    const attr = data.features.map(f => f.attributes).find(a => {
+                        if (isStrict) {
+                            const isOwnerOccupied = a.OOI === 'H';
+                            const isStandardTaxable = (!a.EXCLASS || a.EXCLASS.trim() === '' || a.EXCLASS.startsWith('0'));
+                            return isOwnerOccupied && isStandardTaxable;
+                        }
+                        return true;
+                    }) || (isStrict ? null : data.features[0].attributes);
                     
                     if (attr) {
-                        const rawName = attr.OWNNAME1 || "";
-                        const isExcluded = /TRUST|REVOCABLE|REV\b|TRU\b|TR\b|TTEE|LLC|INC\b|CORP|L\.L\.C|PROPERTIES|LIVING|LVG|FAM|PARTNERSHIP|LTD\b/i.test(rawName);
-
-                        if (!isExcluded) {
-                            results.push(formatApiRecord(attr));
-                        }
+                        results.push(formatApiRecord(attr));
                     }
                 }
             } catch (e) { console.error(e); }
@@ -197,42 +201,23 @@ window.runLookupAndFormat = async () => {
 }
 
 function formatApiRecord(attr) {
-    const rawName = attr.OWNNAME1 || "Unknown Owner";
     const fullAddr = `${attr.PREMSNUM || ''} ${attr.PREMSNAM || ''} ${attr.PREMSTYP || ''}`.trim();
-    const isDeceased = /EST OF|ESTATE| DEC|DECD|DECEASED|ADMIN OF|EXEC OF/i.test(rawName);
-    let status = "Active";
-    if (isDeceased) status = "Deceased";
+    const sdatLink = "https://sdat.dat.maryland.gov/RealProperty/Pages/default.aspx";
 
     return {
-        name: cleanName(rawName),
-        rawName: rawName,
+        name: "Current Resident",
         address: toTitleCase(fullAddr),
         city: toTitleCase(attr.PREMCITY || ""),
         state: "MD",
         zip: attr.PREMZIP || "",
-        status: status
+        status: "Active",
+        sdatLink: sdatLink
     };
 }
 
-function cleanName(n) {
-    let res = n.split('&')[0]
-               .replace(/ETAL|ET\sAL|EST OF|ESTATE| DEC|DECD|REVOCABLE|LIVING|TRUST/gi, '')
-               .replace(/[^a-zA-Z,\s]/g, '')
-               .trim();
-    if (res.includes(',')) {
-        const parts = res.split(',');
-        res = `${parts[1].trim()} ${parts[0].trim()}`;
-    } else {
-        const parts = res.split(/\s+/);
-        if (parts.length > 1) {
-            const lastName = parts.shift(); 
-            res = `${parts.join(' ')} ${lastName}`;
-        }
-    }
-    return toTitleCase(res);
+function toTitleCase(s) { 
+    return s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()); 
 }
-
-function toTitleCase(s) { return s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()); }
 
 function renderResults(data) {
     const canvas = document.getElementById('outputCanvas');
@@ -269,8 +254,11 @@ function renderResults(data) {
                     <tr class="border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors">
                         <td class="py-2 px-4 border-l-4" style="border-left-color: ${statusColor}">
                             <div class="text-lg text-gray-800">
-                                <span class="font-bold">${item.name || 'Unknown'}</span>, <span class="text-gray-600 text-base">${item.address || 'Unknown Address'}, ${item.city || ''} ${item.state || 'MD'} ${item.zip || ''}</span>
+                                <span class="font-bold">${item.name || 'Current Resident'}</span>, <span class="text-gray-600 text-base">${item.address || 'Unknown Address'}, ${item.city || ''} ${item.state || 'MD'} ${item.zip || ''}</span>
                                 ${item.status !== 'Active' ? `<span class="ml-2 px-2 py-0.5 text-[10px] uppercase text-white rounded-full inline-block align-middle ${badgeColor}">${item.status}</span>` : ''}
+                                <div class="mt-1">
+                                    <a href="${item.sdatLink}" target="_blank" class="text-xs text-cardinal underline font-bold hover:text-red-800 transition-colors no-print">View Official Record on SDAT</a>
+                                </div>
                             </div>
                         </td>
                     </tr>`;
