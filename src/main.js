@@ -36,7 +36,12 @@ const appId = 'cardinal-address-lookup';
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = initializeFirestore(app, { experimentalForceLongPolling: true });
-const API_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
+
+// --- Whitepages API Configuration ---
+// It is highly recommended to rely ONLY on the .env variable in production to secure your key.
+const WP_API_KEY = import.meta.env.VITE_WHITEPAGES_API_KEY || "WbZkpatHn19DeAJWv4Jos9zpWpZbmTFi3XWJ8zis";
+// Endpoint based on Whitepages new API documentation for Property/Deed events
+const API_URL = "https://api.whitepages.com/v1/property_deeds"; 
 
 // --- State ---
 let currentUser = null;
@@ -157,65 +162,137 @@ window.runLookupAndFormat = async () => {
     modal.classList.remove('hidden');
 
     for (let i = 0; i < lines.length; i++) {
+        // Improved parsing to handle multi-word street names properly
         const parts = lines[i].trim().split(/[\t\s]+/).filter(p => p.length > 0);
         if (parts.length >= 2) {
             const houseNum = parts[0];
-            const streetName = parts[1];
+            const streetName = parts.slice(1).join(" "); 
             addrDisplay.innerText = `FETCHING: ${houseNum} ${streetName}`;
+            
             const percent = Math.round(((i + 1) / lines.length) * 100);
             bar.style.width = `${percent}%`;
             text.innerText = `${percent}% DONE`;
 
             try {
+                // Formatting parameters for Whitepages API
                 const params = new URLSearchParams({
-                    where: `PREMSNUM = '${houseNum}' AND UPPER(PREMSNAM) LIKE UPPER('%${streetName.replace(/'/g, "''")}%') AND JURSCODE = 'PRIN'`,
-                    outFields: 'OOI,PREMSNUM,PREMSNAM,PREMSTYP,PREMZIP,PREMCITY,EXCLASS',
-                    f: 'json',
-                    resultRecordCount: '10'
+                    api_key: WP_API_KEY,
+                    street_line_1: `${houseNum} ${streetName}`,
+                    state_code: 'MD', // Defaulted to MD based on previous SDAT logic
+                    // If you need to filter results via API instead of frontend, it can be added here
                 });
+
                 const resp = await fetch(`${API_URL}?${params.toString()}`);
                 const data = await resp.json();
                 
-                if (data.features?.length) {
-                    // Find the valid target based on strict owner-occupied and standard taxable filters
-                    const attr = data.features.map(f => f.attributes).find(a => {
-                        if (isStrict) {
-                            const isOwnerOccupied = a.OOI === 'H';
-                            const isStandardTaxable = (!a.EXCLASS || a.EXCLASS.trim() === '' || a.EXCLASS.startsWith('0'));
-                            return isOwnerOccupied && isStandardTaxable;
-                        }
-                        return true;
-                    }) || (isStrict ? null : data.features[0].attributes);
+                // Extracting records. Whitepages typically puts results in a 'records', 'data', or 'results' array
+                const records = data.records || data.results || data.data || (Array.isArray(data) ? data : [data]);
+
+                if (records && records.length > 0) {
+                    // If "Strict" is checked, attempt to find an owner-occupied record (if Whitepages provides that flag)
+                    // Note: Depending on the exact Whitepages response schema, 'owner_occupied' might be named differently
+                    const targetRecord = isStrict 
+                        ? records.find(r => r.owner_occupied === true || r.is_owner === true) 
+                        : records[0];
                     
-                    if (attr) {
-                        results.push(formatApiRecord(attr));
+                    if (targetRecord) {
+                        const formatted = formatApiRecord(targetRecord, houseNum, streetName);
+                        
+                        // Check exclusions
+                        const isExcluded = /TRUST|REVOCABLE|REV\b|TRU\b|TR\b|TTEE|LLC|INC\b|CORP|L\.L\.C|PROPERTIES|LIVING|LVG|FAM|PARTNERSHIP|LTD\b/i.test(formatted.rawName);
+
+                        if (!isExcluded) {
+                            results.push(formatted);
+                        }
                     }
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) { 
+                console.error(`Failed to fetch Whitepages data for ${houseNum} ${streetName}:`, e); 
+            }
         }
     }
+    
     currentBatchData = results;
     currentGroupStrikes = new Array(Math.ceil(results.length / 5)).fill(false);
     renderResults(results);
     modal.classList.add('hidden');
 }
 
-function formatApiRecord(attr) {
-    const fullAddr = `${attr.PREMSNUM || ''} ${attr.PREMSNAM || ''} ${attr.PREMSTYP || ''}`.trim();
-    const sdatLink = "https://sdat.dat.maryland.gov/RealProperty/Pages/default.aspx";
+function formatApiRecord(record, fallbackHouse, fallbackStreet) {
+    // Handle name directly from the root if available (based on sample)
+    let rawName = record.name || "Unknown Owner";
+
+    // Handle the 'current_addresses' array format from the sample
+    let fullAddr = `${fallbackHouse} ${fallbackStreet}`;
+    let city = "";
+    let state = "MD";
+    let zip = "";
+
+    if (record.current_addresses && record.current_addresses.length > 0) {
+        const addrString = record.current_addresses[0].address || "";
+        // The sample address is formatted like: "123 Main St, Seattle, WA 98101"
+        const parts = addrString.split(',');
+        if (parts.length >= 3) {
+            fullAddr = parts[0].trim();
+            city = parts[1].trim();
+            // Split the state and zip by whitespace
+            const stateZip = parts[2].trim().split(/\s+/);
+            state = stateZip[0] || state;
+            zip = stateZip[1] || zip;
+        } else if (addrString) {
+            // Fallback if the address doesn't have the expected commas
+            fullAddr = addrString;
+        }
+    }
+
+    const isDeceased = /EST OF|ESTATE| DEC|DECD|DECEASED|ADMIN OF|EXEC OF/i.test(rawName);
+    let status = "Active";
+    if (isDeceased) status = "Deceased";
+
+    let phoneStr = "";
+    if (record.phones && record.phones.length > 0) {
+        const firstPhone = record.phones[0];
+        phoneStr = firstPhone.number || "";
+        if (phoneStr && firstPhone.type) {
+            phoneStr += ` (${firstPhone.type})`;
+        }
+    }
 
     return {
-        name: "Current Resident",
+        name: cleanName(rawName),
+        rawName: rawName,
         address: toTitleCase(fullAddr),
-        city: toTitleCase(attr.PREMCITY || ""),
-        state: "MD",
-        zip: attr.PREMZIP || "",
-        status: "Active",
-        sdatLink: sdatLink
+        city: toTitleCase(city),
+        state: state,
+        zip: zip,
+        status: status,
+        phone: phoneStr
     };
 }
 
+function cleanName(n) {
+    // Basic cleanup removing legal entity/trust suffixes
+    let res = n.split('&')[0]
+               .replace(/ETAL|ET\sAL|EST OF|ESTATE| DEC|DECD|REVOCABLE|LIVING|TRUST/gi, '')
+               .replace(/[^a-zA-Z,\s]/g, '')
+               .trim();
+               
+    // Handle "Lastname, Firstname" format if Whitepages returns it that way
+    if (res.includes(',')) {
+        const parts = res.split(',');
+        res = `${parts[1].trim()} ${parts[0].trim()}`;
+    } else {
+        const parts = res.split(/\s+/);
+        if (parts.length > 1) {
+            const lastName = parts.shift(); 
+            res = `${parts.join(' ')} ${lastName}`;
+        }
+    }
+    return toTitleCase(res);
+}
+
 function toTitleCase(s) { 
+    if (!s) return "";
     return s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()); 
 }
 
@@ -253,12 +330,12 @@ function renderResults(data) {
                     return `
                     <tr class="border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors">
                         <td class="py-2 px-4 border-l-4" style="border-left-color: ${statusColor}">
-                            <div class="text-lg text-gray-800">
-                                <span class="font-bold">${item.name || 'Current Resident'}</span>, <span class="text-gray-600 text-base">${item.address || 'Unknown Address'}, ${item.city || ''} ${item.state || 'MD'} ${item.zip || ''}</span>
-                                ${item.status !== 'Active' ? `<span class="ml-2 px-2 py-0.5 text-[10px] uppercase text-white rounded-full inline-block align-middle ${badgeColor}">${item.status}</span>` : ''}
-                                <div class="mt-1">
-                                    <a href="${item.sdatLink}" target="_blank" class="text-xs text-cardinal underline font-bold hover:text-red-800 transition-colors no-print">View Official Record on SDAT</a>
+                            <div class="text-lg text-gray-800 flex flex-wrap items-center gap-y-1">
+                                <div>
+                                    <span class="font-bold">${item.name || 'Unknown'}</span>, <span class="text-gray-600 text-base">${item.address || 'Unknown Address'}, ${item.city || ''} ${item.state || 'MD'} ${item.zip || ''}</span>
                                 </div>
+                                ${item.phone ? `<span class="ml-2 text-sm text-gray-500 whitespace-nowrap bg-gray-100 px-2 py-0.5 rounded flex items-center"><svg class="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>${item.phone}</span>` : ''}
+                                ${item.status !== 'Active' ? `<span class="ml-2 px-2 py-0.5 text-[10px] uppercase text-white rounded-full inline-block align-middle ${badgeColor}">${item.status}</span>` : ''}
                             </div>
                         </td>
                     </tr>`;
