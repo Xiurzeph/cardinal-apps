@@ -39,7 +39,7 @@ const db = initializeFirestore(app, { experimentalForceLongPolling: true });
 
 // --- Whitepages API Configuration ---
 // It is highly recommended to rely ONLY on the .env variable in production to secure your key.
-const WP_API_KEY = import.meta.env.VITE_WHITEPAGES_API_KEY || "WbZkpatHn19DeAJWv4Jos9zpWpZbmTFi3XWJ8zis";
+const WP_API_KEY = import.meta.env.VITE_WHITEPAGES_API_KEY;
 // Endpoint based on Whitepages new API documentation for Property/Deed events
 const API_URL = "https://api.whitepages.com/v1/property_deeds"; 
 
