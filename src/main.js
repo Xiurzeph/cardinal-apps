@@ -1,6 +1,6 @@
 /**
  * Cardinal Address Lookup - Core Logic
- * Focus: Grouping, System Sharing, and History Management
+ * Focus: PRIN Priority, Candidate Filtering, and System Sharing
  */
 
 import { initializeApp } from "firebase/app";
@@ -29,7 +29,6 @@ let pendingAction = null;
 
 // --- API Constants ---
 const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
-// Switched to CompositeLocator to fix 403 errors in Bethesda and other regions
 const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_CompositeLocator/GeocodeServer/findAddressCandidates";
 
 // --- State Management ---
@@ -131,12 +130,14 @@ async function runLookupAndFormat() {
 
 /**
  * Queries Maryland iMAP
- * Includes JURSCODE = 'PRIN' filter to exclude other counties
+ * Improvements: Prioritizes PRIN candidates and applies strict JURSCODE filter
  */
 async function fetchPropertyData(addressStr) {
     try {
+        // Step 1: Geocode with local bias
+        const biasedSearch = `${addressStr}, Prince George's County, MD`;
         const geocodeParams = new URLSearchParams({ 
-            SingleLine: addressStr, 
+            SingleLine: biasedSearch, 
             f: 'json', 
             outSR: 102100 
         });
@@ -145,13 +146,21 @@ async function fetchPropertyData(addressStr) {
         const geoData = await geoRes.json();
         if (!geoData.candidates || geoData.candidates.length === 0) return null;
         
-        const bestMatch = geoData.candidates[0];
+        // PRIORITIZATION LOGIC:
+        // Look for a candidate that explicitly mentions "Prince George's" in the address string
+        let bestMatch = geoData.candidates.find(c => c.address.toUpperCase().includes("PRINCE GEORGE'S"));
+        
+        // Fallback: If no PRIN-specific string found, take the top geocoder result
+        if (!bestMatch) bestMatch = geoData.candidates[0];
+        
         const standardizedBase = bestMatch.address.split(',')[0].trim().toUpperCase();
+        const addrParts = standardizedBase.split(' ');
+        const fuzzySearch = `%${addrParts[0]}%${addrParts[1] || ''}%`;
 
+        // Step 2: Query Property DB with strict PRIN priority
         const queryParams = new URLSearchParams({
-            // Filter added here to restrict search to Prince George's County (PRIN)
-            where: `UPPER(ADDRESS) LIKE '${standardizedBase}%' AND JURSCODE = 'PRIN'`,
-            outFields: 'ADDRESS,OOI,SDATWEBADR',
+            where: `UPPER(ADDRESS) LIKE '${fuzzySearch}' AND JURSCODE = 'PRIN'`,
+            outFields: 'ADDRESS,OOI,SDATWEBADR,CITY,ZIPCODE',
             f: 'json',
             resultRecordCount: 1
         });
@@ -163,8 +172,8 @@ async function fetchPropertyData(addressStr) {
             const attr = propData.features[0].attributes;
             return {
                 address_full: attr.ADDRESS,
-                city: attr.CITY || bestMatch.attributes?.City || 'Unknown',
-                zip: attr.ZIPCODE || bestMatch.attributes?.Postal || '',
+                city: attr.CITY || 'CLINTON', 
+                zip: attr.ZIPCODE || '',
                 raw_ooi: attr.OOI, 
                 sdat_url: attr.SDATWEBADR
             };
@@ -178,7 +187,7 @@ function renderResults(groups) {
     const saveContainer = document.getElementById('btn-save-container');
 
     if (groups.length === 0) {
-        canvas.innerHTML = `<div class="p-12 text-center text-gray-400 font-medium">No properties found.</div>`;
+        canvas.innerHTML = `<div class="p-12 text-center text-gray-400 font-medium">No properties found in Prince George's County.</div>`;
         if (saveContainer) saveContainer.classList.add('hidden');
         return;
     }
@@ -190,7 +199,6 @@ function renderResults(groups) {
 
         html += `
             <div class="mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}">
-                <!-- Group Header -->
                 <div class="bg-gray-50 px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4">
                     <div class="flex items-center gap-3">
                         <span class="bg-cardinal text-white text-[10px] font-black px-2 py-1 rounded uppercase tracking-tighter">Group ${gIdx + 1}</span>
@@ -198,7 +206,7 @@ function renderResults(groups) {
                     </div>
                     
                     <div class="flex items-center gap-2">
-                        <button onclick="shareGroup(${gIdx})" class="group-btn bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">
+                        <button onclick="shareGroup(${gIdx})" class="bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">
                             Share Group
                         </button>
                         <button onclick="toggleGroupComplete(${gIdx})" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
@@ -207,7 +215,6 @@ function renderResults(groups) {
                     </div>
                 </div>
 
-                <!-- Table -->
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
                         <tbody class="divide-y divide-gray-100">
@@ -223,11 +230,9 @@ function renderResults(groups) {
                                         </span>
                                     </td>
                                     <td class="p-4 text-right">
-                                        <div class="flex justify-end gap-2">
-                                            <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}">
-                                                SDAT LINK
-                                            </a>
-                                        </div>
+                                        <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}">
+                                            SDAT LINK
+                                        </a>
                                     </td>
                                 </tr>
                             `).join('')}
@@ -249,9 +254,6 @@ function renderResults(groups) {
     }
 }
 
-/**
- * Communicates the group via System Share API
- */
 window.shareGroup = async function(idx) {
     const group = groupedBatch[idx];
     const textContent = `Cardinal Property Group ${idx + 1}:\n` + 
@@ -380,9 +382,6 @@ window.viewBatch = function(batchId) {
     }
 };
 
-/**
- * Delete History Actions
- */
 window.requestDeleteBatch = function(id) {
     openConfirmModal("Delete this batch?", "This action cannot be undone.", async () => {
         try {
@@ -394,19 +393,17 @@ window.requestDeleteBatch = function(id) {
 };
 
 window.requestClearAllHistory = function() {
-    openConfirmModal("Clear All History?", "This will permanently delete every batch you have saved.", async () => {
+    openConfirmModal("Clear All History?", "This will permanently delete everything.", async () => {
         try {
             const querySnapshot = await getDocs(getCollectionRef());
             const deletes = [];
             querySnapshot.forEach(d => deletes.push(deleteDoc(d.ref)));
             await Promise.all(deletes);
-            showToast("All history cleared");
+            showToast("History cleared");
             loadHistory();
         } catch (e) { showToast("Clear failed", "error"); }
     });
 };
-
-// --- Modal Helpers ---
 
 function openConfirmModal(title, msg, callback) {
     const modal = document.getElementById('confirm-modal');
@@ -429,8 +426,6 @@ window.executeConfirmedAction = async function() {
 window.closeSaveModal = function() {
     document.getElementById('save-batch-modal').classList.add('hidden');
 };
-
-// --- Auth Handlers ---
 
 window.googleLogin = async function() {
     try {
@@ -473,8 +468,6 @@ window.switchTab = function(tab) {
         loadHistory();
     }
 };
-
-// --- UI Helpers ---
 
 function startProgressModal(total) {
     const modal = document.getElementById('search-modal');
