@@ -79,7 +79,10 @@ async function runLookupAndFormat() {
                     currentBatch.push({
                         original: address,
                         full_address: result.address_full,
-                        owner_name: result.owner_name,
+                        city: result.city,
+                        state: result.state,
+                        zip: result.zip,
+                        owner_name: isOwnerOcc ? "Owner Occupied" : "Rental/Other",
                         occupancy: isOwnerOcc ? "Owner" : "Rental/Other",
                         county: result.county_name,
                         legal_desc: result.legal_description
@@ -104,7 +107,8 @@ async function fetchPropertyData(addressStr) {
         const geocodeParams = new URLSearchParams({
             SingleLine: addressStr,
             f: 'json',
-            outSR: 102100
+            outSR: 102100,
+            outFields: 'City,Region,Postal' // Explicitly request City, State, Zip
         });
 
         const geoRes = await fetch(`${MD_LOCATOR_URL}?${geocodeParams}`);
@@ -113,10 +117,15 @@ async function fetchPropertyData(addressStr) {
         if (!geoData.candidates || geoData.candidates.length === 0) return null;
         
         const bestMatch = geoData.candidates[0];
+        
+        // Extract Geocode Attributes
+        const geoCity = bestMatch.attributes?.City || '';
+        const geoState = bestMatch.attributes?.Region || 'MD';
+        const geoZip = bestMatch.attributes?.Postal || '';
 
         const queryParams = new URLSearchParams({
             where: `UPPER(address) LIKE UPPER('%${bestMatch.address.split(',')[0]}%')`,
-            outFields: 'address,owner_name,occ_status,county_name,legal_description',
+            outFields: 'address,occ_status,county_name,legal_description', // Removed owner_name
             f: 'json',
             resultRecordCount: 1
         });
@@ -128,7 +137,9 @@ async function fetchPropertyData(addressStr) {
             const attr = propData.features[0].attributes;
             return {
                 address_full: attr.address,
-                owner_name: attr.owner_name,
+                city: geoCity,
+                state: geoState,
+                zip: geoZip,
                 occ_status: attr.occ_status,
                 county_name: attr.county_name,
                 legal_description: attr.legal_description
@@ -157,6 +168,7 @@ function renderResults(data) {
                 <tr>
                     <th class="p-4 border-b">Input Address</th>
                     <th class="p-4 border-b">Standardized Address</th>
+                    <th class="p-4 border-b">City, State, Zip</th>
                     <th class="p-4 border-b">Owner</th>
                     <th class="p-4 border-b">Status</th>
                 </tr>
@@ -165,11 +177,15 @@ function renderResults(data) {
     `;
 
     data.forEach(item => {
+        // Format city/state/zip display cleanly
+        const cityStateZip = item.city ? `${item.city}, ${item.state} ${item.zip}` : '---';
+
         html += `
             <tr class="hover:bg-gray-50 transition-colors">
                 <td class="p-4 text-xs font-mono text-gray-400">${item.original}</td>
                 <td class="p-4 text-sm font-bold text-gray-800">${item.full_address || '---'}</td>
-                <td class="p-4 text-sm text-gray-600">${item.owner_name || 'N/A'}</td>
+                <td class="p-4 text-sm text-gray-600">${cityStateZip}</td>
+                <td class="p-4 text-sm text-gray-600 italic">${item.owner_name}</td>
                 <td class="p-4">
                     <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${item.occupancy === 'Owner' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
                         ${item.occupancy}
