@@ -1,8 +1,31 @@
 /**
  * Cardinal Address Lookup - Core Logic
- * Focus: Maryland iMAP Property Data Integration
- * Removes: Name lookup/formatting requirements
+ * Focus: Maryland iMAP Property Data Integration & Firebase Storage
  */
+
+import { initializeApp } from "firebase/app";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from "firebase/firestore";
+
+// --- Firebase Configuration ---
+// Loaded securely from your .env file via Vite
+const myFirebaseConfig = {
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID
+};
+
+// Setup for both local/GitHub Pages and Canvas environment
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : myFirebaseConfig;
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'cardinal-lookup';
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+let currentUser = null;
 
 // --- Configuration & Constants ---
 const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
@@ -11,10 +34,24 @@ const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServi
 // --- State Management ---
 let currentBatch = [];
 let isProcessing = false;
+let currentTab = 'formatter';
+
+// --- Auth State Listener ---
+onAuthStateChanged(auth, (user) => {
+    currentUser = user;
+    if (user) {
+        document.getElementById('login-screen').classList.add('hidden');
+        document.getElementById('app-content').classList.remove('hidden');
+        document.getElementById('user-display').innerText = user.isAnonymous ? "Guest Session" : (user.displayName || "Logged In");
+        if (currentTab === 'database') loadHistory();
+    } else {
+        document.getElementById('login-screen').classList.remove('hidden');
+        document.getElementById('app-content').classList.add('hidden');
+    }
+});
 
 /**
  * Main execution function triggered by the "Fetch" button.
- * Cleans input, geocodes addresses, and fetches property data.
  */
 async function runLookupAndFormat() {
     const input = document.getElementById('csvInput').value;
@@ -36,14 +73,13 @@ async function runLookupAndFormat() {
             const result = await fetchPropertyData(address);
             
             if (result) {
-                // Logic: Only add if (Not filtering OR (filtering AND is owner occupied))
                 const isOwnerOcc = result.occ_status === "H"; // 'H' usually denotes Homestead/Owner Occupied in MD iMAP
                 
                 if (!ownerOccupiedOnly || (ownerOccupiedOnly && isOwnerOcc)) {
                     currentBatch.push({
                         original: address,
                         full_address: result.address_full,
-                        owner_name: result.owner_name, // Kept for reference but not enforced as a requirement
+                        owner_name: result.owner_name,
                         occupancy: isOwnerOcc ? "Owner" : "Rental/Other",
                         county: result.county_name,
                         legal_desc: result.legal_description
@@ -65,7 +101,6 @@ async function runLookupAndFormat() {
  */
 async function fetchPropertyData(addressStr) {
     try {
-        // Step 1: Geocode the address to get coordinates or a standard format
         const geocodeParams = new URLSearchParams({
             SingleLine: addressStr,
             f: 'json',
@@ -77,11 +112,8 @@ async function fetchPropertyData(addressStr) {
         
         if (!geoData.candidates || geoData.candidates.length === 0) return null;
         
-        // Use the best candidate
         const bestMatch = geoData.candidates[0];
 
-        // Step 2: Query Property MapServer using the address or location
-        // Here we use a 'where' clause on the standardized address field
         const queryParams = new URLSearchParams({
             where: `UPPER(address) LIKE UPPER('%${bestMatch.address.split(',')[0]}%')`,
             outFields: 'address,owner_name,occ_status,county_name,legal_description',
@@ -115,6 +147,7 @@ function renderResults(data) {
     const canvas = document.getElementById('outputCanvas');
     if (data.length === 0) {
         canvas.innerHTML = `<div class="p-12 text-center text-gray-400 font-medium">No properties found matching your criteria.</div>`;
+        document.getElementById('btn-save-container').classList.add('hidden');
         return;
     }
 
@@ -149,11 +182,153 @@ function renderResults(data) {
     html += `</tbody></table>`;
     canvas.innerHTML = html;
     
-    // Show save button if data exists
-    document.getElementById('btn-save-container')?.classList.remove('hidden');
+    if (currentUser) {
+        document.getElementById('btn-save-container').classList.remove('hidden');
+    }
 }
 
+// --- Firebase Operations ---
+
+function getCollectionRef() {
+    return collection(db, 'artifacts', appId, 'users', currentUser.uid, 'batches');
+}
+
+window.saveOrUpdateBatch = async function() {
+    if (!currentUser) return showToast("Must be logged in to save", "error");
+    if (currentBatch.length === 0) return showToast("No data to save", "error");
+
+    const batchName = prompt("Enter a name for this batch:");
+    if (!batchName) return;
+
+    try {
+        const batchData = {
+            name: batchName,
+            data: currentBatch,
+            timestamp: Date.now()
+        };
+        await addDoc(getCollectionRef(), batchData);
+        showToast("Batch saved to history!", "success");
+    } catch (error) {
+        console.error("Error saving document: ", error);
+        showToast("Error saving batch", "error");
+    }
+};
+
+async function loadHistory() {
+    if (!currentUser) return;
+    const tableBody = document.getElementById("db-table-body");
+    tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-500">Loading history...</td></tr>';
+
+    try {
+        const querySnapshot = await getDocs(getCollectionRef());
+        let batches = [];
+        querySnapshot.forEach((doc) => {
+            batches.push({ id: doc.id, ...doc.data() });
+        });
+
+        // Sort by newest first
+        batches.sort((a, b) => b.timestamp - a.timestamp);
+
+        if (batches.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-500">No saved batches found.</td></tr>';
+            return;
+        }
+
+        tableBody.innerHTML = "";
+        batches.forEach(batch => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td class="px-6 py-4">
+                    <div class="font-bold text-gray-800">${batch.name}</div>
+                    <div class="text-[10px] text-gray-400 font-normal">${new Date(batch.timestamp).toLocaleString()} • ${batch.data.length} properties</div>
+                </td>
+                <td class="px-6 py-4 text-right flex justify-end gap-4">
+                    <button onclick="window.viewBatch('${batch.id}')" class="text-cardinal font-bold hover:underline text-sm">View</button>
+                    <button onclick="window.deleteBatch('${batch.id}')" class="text-gray-400 hover:text-red-600 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </td>
+            `;
+            // Attach full data temporarily to window for viewing
+            window[`batchData_${batch.id}`] = batch.data;
+            tableBody.appendChild(tr);
+        });
+    } catch (error) {
+        console.error("Error loading history: ", error);
+        tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-red-500">Error loading history</td></tr>';
+    }
+}
+
+window.viewBatch = function(batchId) {
+    const data = window[`batchData_${batchId}`];
+    if (data) {
+        currentBatch = data;
+        renderResults(data);
+        window.switchTab('formatter');
+        showToast("Batch loaded successfully");
+    }
+};
+
+window.deleteBatch = async function(batchId) {
+    if (!currentUser) return;
+    if (confirm("Are you sure you want to delete this batch?")) {
+        try {
+            await deleteDoc(doc(getCollectionRef(), batchId));
+            showToast("Batch deleted", "success");
+            loadHistory(); // Refresh the table
+        } catch (error) {
+            console.error("Error deleting doc: ", error);
+            showToast("Failed to delete", "error");
+        }
+    }
+};
+
+// --- Authentication UI Handlers ---
+
+window.googleLogin = async function() {
+    const provider = new GoogleAuthProvider();
+    try {
+        await signInWithPopup(auth, provider);
+        showToast("Logged in successfully");
+    } catch (error) {
+        console.error(error);
+        showToast("Login failed", "error");
+    }
+};
+
+window.guestLogin = async function() {
+    try {
+        await signInAnonymously(auth);
+        showToast("Continuing as guest");
+    } catch (error) {
+        console.error(error);
+        showToast("Guest login failed", "error");
+    }
+};
+
+window.logout = async function() {
+    try {
+        await signOut(auth);
+        showToast("Logged out");
+    } catch (error) {
+        console.error(error);
+    }
+};
+
 // --- UI Helpers ---
+
+window.switchTab = function(tab) {
+    currentTab = tab;
+    document.getElementById("tab-formatter").classList.toggle("hidden", tab !== "formatter");
+    document.getElementById("tab-database").classList.toggle("hidden", tab !== "database");
+    
+    document.getElementById("btn-tab-formatter").className = tab === "formatter" ? "tab-active py-1 transition-colors" : "text-gray-400 py-1 hover:text-gray-600 transition-colors";
+    document.getElementById("btn-tab-database").className = tab === "database" ? "tab-active py-1 transition-colors" : "text-gray-400 py-1 hover:text-gray-600 transition-colors";
+
+    if (tab === 'database') {
+        loadHistory();
+    }
+};
 
 function startProgressModal(total) {
     const modal = document.getElementById('search-modal');
@@ -187,17 +362,15 @@ function showToast(msg, type = "success") {
     toast.innerText = msg;
     container.appendChild(toast);
     
-    // Animate in
     setTimeout(() => {
         toast.classList.remove('translate-y-10', 'opacity-0');
     }, 10);
     
-    // Remove
     setTimeout(() => {
         toast.classList.add('opacity-0');
         setTimeout(() => toast.remove(), 300);
     }, 3000);
 }
 
-// Expose to window for HTML onclick handlers
+// Expose main run function to window
 window.runLookupAndFormat = runLookupAndFormat;
