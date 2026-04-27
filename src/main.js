@@ -1,188 +1,346 @@
+/**
+ * Cardinal Address Lookup - Core Logic
+ * Focus: Maryland iMAP Property Data Integration & Firebase Storage
+ * Feature: Auto-compiles Tailwind via style.css import
+ */
+
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp, deleteDoc, doc } from "firebase/firestore";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from "firebase/firestore";
+
+// This line tells Vite to compile your Tailwind CSS into the final build
+import './style.css'; 
 
 // --- Firebase Configuration ---
-// Ensure these environment variables are set in your .env file or replaced with strings
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+// Securely loaded from your .env file
+const myFirebaseConfig = {
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-const app = initializeApp(firebaseConfig);
+const app = initializeApp(myFirebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const provider = new GoogleAuthProvider();
+const appId = 'cardinal-lookup';
+let currentUser = null;
+
+// --- API Constants ---
+const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
+const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_MultiroleLocator/GeocodeServer/findAddressCandidates";
 
 // --- State Management ---
-let currentUser = null;
-let currentBatchData = [];
-let isGuest = false;
+let currentBatch = [];
+let currentTab = 'formatter';
 
-// --- Auth Functions ---
-const googleLogin = async () => {
-  try {
-    const result = await signInWithPopup(auth, provider);
-    currentUser = result.user;
-    showApp();
-  } catch (error) {
-    console.error("Login failed:", error);
-    showToast("Login failed. Please try again.", "error");
-  }
-};
+// --- Auth State Listener ---
+onAuthStateChanged(auth, (user) => {
+    currentUser = user;
+    if (user) {
+        document.getElementById('login-screen').classList.add('hidden');
+        document.getElementById('app-content').classList.remove('hidden');
+        document.getElementById('user-display').innerText = user.isAnonymous ? "Guest Session" : (user.displayName || "Logged In");
+        if (currentTab === 'database') loadHistory();
+    } else {
+        document.getElementById('login-screen').classList.remove('hidden');
+        document.getElementById('app-content').classList.add('hidden');
+    }
+});
 
-const guestLogin = () => {
-  isGuest = true;
-  currentUser = { displayName: "Guest User", email: "guest@cardinal.local" };
-  showApp();
-};
+/**
+ * Main execution function triggered by the "Fetch" button.
+ */
+async function runLookupAndFormat() {
+    const input = document.getElementById('csvInput').value;
+    const ownerOccupiedOnly = document.getElementById('chkOwnerOccupied').checked;
+    
+    if (!input.trim()) return showToast("Please enter at least one address.", "error");
+    
+    const rawAddresses = input.split('\n').map(a => a.trim()).filter(a => a.length > 0);
+    if (rawAddresses.length === 0) return;
 
-const logout = async () => {
-  await signOut(auth);
-  location.reload();
-};
+    startProgressModal(rawAddresses.length);
+    currentBatch = [];
+    
+    for (let i = 0; i < rawAddresses.length; i++) {
+        const address = rawAddresses[i];
+        updateProgress(i + 1, rawAddresses.length, address);
+        
+        try {
+            const result = await fetchPropertyData(address);
+            
+            if (result) {
+                const isOwnerOcc = result.occ_status === "H"; // 'H' = Homestead/Owner Occupied
+                
+                if (!ownerOccupiedOnly || (ownerOccupiedOnly && isOwnerOcc)) {
+                    // MASKING: We overwrite "John Doe" or API names with generic labels here
+                    const maskedName = isOwnerOcc ? "Owner Occupied" : "Rental/Other";
 
-// --- UI Logic ---
-function showApp() {
-  document.getElementById('login-screen').classList.add('hidden');
-  document.getElementById('app-content').classList.remove('hidden');
-  document.getElementById('user-display').textContent = currentUser.displayName || currentUser.email;
-  if (isGuest) document.getElementById('btn-save-container').classList.add('hidden');
+                    currentBatch.push({
+                        original: address,
+                        full_address: result.address_full,
+                        city: result.city,
+                        state: result.state,
+                        zip: result.zip,
+                        owner_name: maskedName,
+                        occupancy: isOwnerOcc ? "Owner" : "Rental/Other",
+                        county: result.county_name,
+                        legal_desc: result.legal_description
+                    });
+                }
+            }
+        } catch (err) {
+            console.error(`Error processing ${address}:`, err);
+        }
+    }
+
+    renderResults(currentBatch);
+    hideProgressModal();
+    showToast(`Processed ${rawAddresses.length} addresses. Found ${currentBatch.length} matches.`);
 }
 
-const switchTab = (tabName) => {
-  const tabs = ['formatter', 'database'];
-  tabs.forEach(t => {
-    document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tabName);
-    const btn = document.getElementById(`btn-tab-${t}`);
-    if (t === tabName) {
-      btn.classList.add('tab-active', 'text-gray-900');
-      btn.classList.remove('text-gray-400');
-    } else {
-      btn.classList.remove('tab-active', 'text-gray-900');
-      btn.classList.add('text-gray-400');
-    }
-  });
-  if (tabName === 'database') loadHistory();
-};
-
-// --- Core Logic (Lookup & Format) ---
-const runLookupAndFormat = async () => {
-    const input = document.getElementById('csvInput').value;
-    if (!input.trim()) return showToast("Please paste some addresses.", "error");
-
-    const addresses = input.split('\n').filter(line => line.trim());
-    const modal = document.getElementById('search-modal');
-    const progressBar = document.getElementById('modal-progress-bar');
-    const progressText = document.getElementById('modal-progress-text');
-    const addressDisplay = document.getElementById('current-search-address');
-
-    modal.classList.remove('hidden');
-    currentBatchData = [];
-    
-    for (let i = 0; i < addresses.length; i++) {
-        const addr = addresses[i].trim();
-        addressDisplay.textContent = addr;
-        
-        // Mock API Call (Replace with your actual API logic)
-        await new Promise(r => setTimeout(r, 600)); 
-        
-        currentBatchData.push({
-            address: addr,
-            owner: "John Doe", // Placeholder
-            occupied: document.getElementById('chkOwnerOccupied').checked ? "Yes" : "N/A"
+/**
+ * Queries Maryland iMAP for property details
+ */
+async function fetchPropertyData(addressStr) {
+    try {
+        const geocodeParams = new URLSearchParams({
+            SingleLine: addressStr,
+            f: 'json',
+            outSR: 102100,
+            outFields: 'City,Region,Postal'
         });
 
-        const percent = Math.round(((i + 1) / addresses.length) * 100);
-        progressBar.style.width = `${percent}%`;
-        progressText.textContent = `${percent}% Complete`;
+        const geoRes = await fetch(`${MD_LOCATOR_URL}?${geocodeParams}`);
+        const geoData = await geoRes.json();
+        
+        if (!geoData.candidates || geoData.candidates.length === 0) return null;
+        
+        const bestMatch = geoData.candidates[0];
+        
+        const queryParams = new URLSearchParams({
+            where: `UPPER(address) LIKE UPPER('%${bestMatch.address.split(',')[0]}%')`,
+            outFields: 'address,occ_status,county_name,legal_description',
+            f: 'json',
+            resultRecordCount: 1
+        });
+
+        const propRes = await fetch(`${MD_GEODATA_URL}?${queryParams}`);
+        const propData = await propRes.json();
+
+        if (propData.features && propData.features.length > 0) {
+            const attr = propData.features[0].attributes;
+            return {
+                address_full: attr.address,
+                city: bestMatch.attributes?.City || '',
+                state: bestMatch.attributes?.Region || 'MD',
+                zip: bestMatch.attributes?.Postal || '',
+                occ_status: attr.occ_status,
+                county_name: attr.county_name,
+                legal_description: attr.legal_description
+            };
+        }
+    } catch (e) {
+        throw e;
     }
-
-    modal.classList.add('hidden');
-    renderOutput();
-    document.getElementById('btn-save-container').classList.remove('hidden');
-};
-
-function renderOutput() {
-    const canvas = document.getElementById('outputCanvas');
-    canvas.innerHTML = `
-        <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
-                <tr>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Address</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Owner</th>
-                </tr>
-            </thead>
-            <tbody class="bg-white divide-y divide-gray-200">
-                ${currentBatchData.map(row => `
-                    <tr>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm">${row.address}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm">${row.owner}</td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
-    `;
+    return null;
 }
 
-// --- History/DB Functions ---
-const saveOrUpdateBatch = async () => {
-    if (isGuest) return;
+/**
+ * UI Rendering logic
+ */
+function renderResults(data) {
+    const canvas = document.getElementById('outputCanvas');
+    if (data.length === 0) {
+        canvas.innerHTML = `<div class="p-12 text-center text-gray-400 font-medium">No properties found matching your criteria.</div>`;
+        document.getElementById('btn-save-container').classList.add('hidden');
+        return;
+    }
+
+    let html = `
+        <table class="w-full text-left border-collapse">
+            <thead class="bg-gray-100 text-[10px] uppercase font-bold text-gray-500">
+                <tr>
+                    <th class="p-4 border-b">Input Address</th>
+                    <th class="p-4 border-b">Standardized Address</th>
+                    <th class="p-4 border-b">City, State, Zip</th>
+                    <th class="p-4 border-b">Owner</th>
+                    <th class="p-4 border-b">Status</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+    `;
+
+    data.forEach(item => {
+        const cityStateZip = item.city ? `${item.city}, ${item.state} ${item.zip}` : '---';
+        html += `
+            <tr class="hover:bg-gray-50 transition-colors">
+                <td class="p-4 text-xs font-mono text-gray-400">${item.original}</td>
+                <td class="p-4 text-sm font-bold text-gray-800">${item.full_address || '---'}</td>
+                <td class="p-4 text-sm text-gray-600">${cityStateZip}</td>
+                <td class="p-4 text-sm text-gray-600 italic font-medium">${item.owner_name}</td>
+                <td class="p-4">
+                    <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${item.occupancy === 'Owner' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
+                        ${item.occupancy}
+                    </span>
+                </td>
+            </tr>
+        `;
+    });
+
+    html += `</tbody></table>`;
+    canvas.innerHTML = html;
+    
+    if (currentUser) {
+        document.getElementById('btn-save-container').classList.remove('hidden');
+    }
+}
+
+// --- Firebase Operations ---
+
+function getCollectionRef() {
+    return collection(db, 'artifacts', appId, 'users', currentUser.uid, 'batches');
+}
+
+window.saveOrUpdateBatch = async function() {
+    if (!currentUser || currentUser.isAnonymous) return showToast("Must sign in with Google to save history", "error");
+    if (currentBatch.length === 0) return showToast("No data to save", "error");
+
     const batchName = prompt("Enter a name for this batch:");
     if (!batchName) return;
 
     try {
-        await addDoc(collection(db, "batches"), {
+        await addDoc(getCollectionRef(), {
             name: batchName,
-            data: currentBatchData,
-            userId: currentUser.uid,
-            timestamp: serverTimestamp()
+            data: currentBatch,
+            timestamp: Date.now()
         });
         showToast("Batch saved to history!", "success");
-    } catch (e) {
-        showToast("Error saving batch.", "error");
+    } catch (error) {
+        showToast("Error saving batch", "error");
     }
 };
 
 async function loadHistory() {
-    const tbody = document.getElementById('db-table-body');
-    tbody.innerHTML = '<tr><td colspan="2" class="p-4 text-center">Loading...</td></tr>';
+    if (!currentUser) return;
+    const tableBody = document.getElementById("db-table-body");
+    tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-500 italic">Loading history...</td></tr>';
+
+    try {
+        const querySnapshot = await getDocs(getCollectionRef());
+        let batches = [];
+        querySnapshot.forEach((doc) => batches.push({ id: doc.id, ...doc.data() }));
+        batches.sort((a, b) => b.timestamp - a.timestamp);
+
+        if (batches.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-500">No saved batches found.</td></tr>';
+            return;
+        }
+
+        tableBody.innerHTML = "";
+        batches.forEach(batch => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td class="px-6 py-4">
+                    <div class="font-bold text-gray-800">${batch.name}</div>
+                    <div class="text-[10px] text-gray-400 font-normal">${new Date(batch.timestamp).toLocaleString()} • ${batch.data.length} items</div>
+                </td>
+                <td class="px-6 py-4 text-right">
+                    <button onclick="window.viewBatch('${batch.id}')" class="text-cardinal font-bold hover:underline text-sm">View</button>
+                </td>
+            `;
+            window[`batchData_${batch.id}`] = batch.data;
+            tableBody.appendChild(tr);
+        });
+    } catch (error) {
+        tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-red-500">Error loading history</td></tr>';
+    }
+}
+
+window.viewBatch = function(batchId) {
+    const data = window[`batchData_${batchId}`];
+    if (data) {
+        currentBatch = data;
+        renderResults(data);
+        window.switchTab('formatter');
+        showToast("Batch loaded successfully");
+    }
+};
+
+// --- Auth Handlers ---
+
+window.googleLogin = async function() {
+    try {
+        const provider = new GoogleAuthProvider();
+        await signInWithPopup(auth, provider);
+        showToast("Logged in successfully");
+    } catch (error) {
+        showToast("Login failed", "error");
+    }
+};
+
+window.guestLogin = async function() {
+    try {
+        await signInAnonymously(auth);
+        showToast("Continuing as guest (Save disabled)");
+    } catch (error) {
+        showToast("Guest login failed", "error");
+    }
+};
+
+window.logout = async function() {
+    await signOut(auth);
+    location.reload();
+};
+
+window.switchTab = function(tab) {
+    currentTab = tab;
+    document.getElementById("tab-formatter").classList.toggle("hidden", tab !== "formatter");
+    document.getElementById("tab-database").classList.toggle("hidden", tab !== "database");
     
-    const q = query(collection(db, "batches"), orderBy("timestamp", "desc"));
-    const querySnapshot = await getDocs(q);
-    
-    tbody.innerHTML = '';
-    querySnapshot.forEach((doc) => {
-        const batch = doc.data();
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td class="px-6 py-4 text-sm font-medium text-gray-900">${batch.name}</td>
-            <td class="px-6 py-4 text-right">
-                <button class="text-cardinal hover:text-red-800 font-bold text-xs uppercase">View</button>
-            </td>
-        `;
-        tbody.appendChild(tr);
-    });
+    document.getElementById("btn-tab-formatter").className = tab === "formatter" ? "tab-active py-1 transition-colors" : "text-gray-400 py-1 hover:text-gray-600 transition-colors";
+    document.getElementById("btn-tab-database").className = tab === "database" ? "tab-active py-1 transition-colors" : "text-gray-400 py-1 hover:text-gray-600 transition-colors";
+
+    if (tab === 'database') loadHistory();
+};
+
+// --- UI Progress Helpers ---
+
+function startProgressModal(total) {
+    const modal = document.getElementById('search-modal');
+    if (modal) modal.classList.remove('hidden');
+}
+
+function updateProgress(current, total, currentAddress) {
+    const pct = Math.round((current / total) * 100);
+    const bar = document.getElementById('modal-progress-bar');
+    const text = document.getElementById('modal-progress-text');
+    const addr = document.getElementById('current-search-address');
+    if (bar) bar.style.width = `${pct}%`;
+    if (text) text.innerText = `${pct}% Complete (${current}/${total})`;
+    if (addr) addr.innerText = currentAddress;
+}
+
+function hideProgressModal() {
+    const modal = document.getElementById('search-modal');
+    if (modal) modal.classList.add('hidden');
 }
 
 function showToast(msg, type = "success") {
     const container = document.getElementById('toast-container');
+    if (!container) return;
     const toast = document.createElement('div');
-    toast.className = `mb-2 px-6 py-3 rounded-lg shadow-lg text-white font-bold transition-all transform translate-y-0 ${type === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`;
-    toast.textContent = msg;
+    toast.className = `mb-3 px-6 py-3 rounded-lg shadow-lg text-white font-bold transform transition-all duration-300 translate-y-10 opacity-0 ${type === 'success' ? 'bg-emerald-600' : 'bg-red-600'}`;
+    toast.innerText = msg;
     container.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
+    setTimeout(() => toast.classList.remove('translate-y-10', 'opacity-0'), 10);
+    setTimeout(() => {
+        toast.classList.add('opacity-0');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
 }
 
-// --- GLOBAL EXPORT BRIDGE ---
-// This part is critical for Vite modules to work with HTML onclick events
-window.googleLogin = googleLogin;
-window.guestLogin = guestLogin;
-window.logout = logout;
-window.switchTab = switchTab;
 window.runLookupAndFormat = runLookupAndFormat;
-window.saveOrUpdateBatch = saveOrUpdateBatch;
