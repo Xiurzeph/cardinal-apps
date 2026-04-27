@@ -29,7 +29,8 @@ let pendingAction = null;
 
 // --- API Constants ---
 const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
-const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_CompositeLocator/GeocodeServer/findAddressCandidates";
+// Reverted back to the working MultiroleLocator since CompositeLocator is 404 on the new server
+const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_MultiroleLocator/GeocodeServer/findAddressCandidates";
 
 // --- State Management ---
 let groupedBatch = []; 
@@ -130,7 +131,8 @@ async function runLookupAndFormat() {
 
 /**
  * Queries Maryland iMAP
- * Improvements: Prioritizes PRIN candidates and applies strict JURSCODE filter
+ * Improvements: Prioritizes PRIN candidates, applies strict JURSCODE filter,
+ * and fixes the Tax ID masking issue.
  */
 async function fetchPropertyData(addressStr) {
     try {
@@ -147,15 +149,20 @@ async function fetchPropertyData(addressStr) {
         if (!geoData.candidates || geoData.candidates.length === 0) return null;
         
         // PRIORITIZATION LOGIC:
-        // Look for a candidate that explicitly mentions "Prince George's" in the address string
         let bestMatch = geoData.candidates.find(c => c.address.toUpperCase().includes("PRINCE GEORGE'S"));
-        
-        // Fallback: If no PRIN-specific string found, take the top geocoder result
         if (!bestMatch) bestMatch = geoData.candidates[0];
         
-        const standardizedBase = bestMatch.address.split(',')[0].trim().toUpperCase();
-        const addrParts = standardizedBase.split(' ');
-        const fuzzySearch = `%${addrParts[0]}%${addrParts[1] || ''}%`;
+        let addressParts = bestMatch.address.split(',');
+        let standardizedBase = addressParts[0].trim().toUpperCase();
+        
+        // FIX: If the Geocoder returns the 11-digit Tax ID first (e.g., "17113930070, 12600 ABERCORN PL")
+        // we need to skip the Tax ID and grab the actual address string in the second part.
+        if (/^\d{10,}$/.test(standardizedBase) && addressParts.length > 1) {
+            standardizedBase = addressParts[1].trim().toUpperCase();
+        }
+        
+        const addrTokens = standardizedBase.split(' ');
+        const fuzzySearch = `%${addrTokens[0]}%${addrTokens[1] || ''}%`;
 
         // Step 2: Query Property DB with strict PRIN priority
         const queryParams = new URLSearchParams({
