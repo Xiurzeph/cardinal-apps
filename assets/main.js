@@ -179,13 +179,16 @@ function renderResults(data) {
     data.forEach(item => {
         // Format city/state/zip display cleanly
         const cityStateZip = item.city ? `${item.city}, ${item.state} ${item.zip}` : '---';
+        
+        // Force the display to only show Occupancy status instead of any old real names from Firebase
+        const displayOwner = item.occupancy === 'Owner' ? 'Owner Occupied' : 'Rental/Other';
 
         html += `
             <tr class="hover:bg-gray-50 transition-colors">
                 <td class="p-4 text-xs font-mono text-gray-400">${item.original}</td>
                 <td class="p-4 text-sm font-bold text-gray-800">${item.full_address || '---'}</td>
                 <td class="p-4 text-sm text-gray-600">${cityStateZip}</td>
-                <td class="p-4 text-sm text-gray-600 italic">${item.owner_name}</td>
+                <td class="p-4 text-sm text-gray-600 italic">${displayOwner}</td>
                 <td class="p-4">
                     <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${item.occupancy === 'Owner' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
                         ${item.occupancy}
