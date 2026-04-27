@@ -73,16 +73,19 @@ async function runLookupAndFormat() {
             const result = await fetchPropertyData(address);
             
             if (result) {
-                const isOwnerOcc = result.occ_status === "H"; // 'H' usually denotes Homestead/Owner Occupied in MD iMAP
+                const isOwnerOcc = result.occ_status === "H"; // 'H' denotes Homestead/Owner Occupied
                 
                 if (!ownerOccupiedOnly || (ownerOccupiedOnly && isOwnerOcc)) {
+                    // MASKING LEVEL 1: Overwrite the name before it ever touches currentBatch or Firebase
+                    const maskedName = isOwnerOcc ? "Owner Occupied" : "Rental/Other";
+
                     currentBatch.push({
                         original: address,
                         full_address: result.address_full,
                         city: result.city,
                         state: result.state,
                         zip: result.zip,
-                        owner_name: isOwnerOcc ? "Owner Occupied" : "Rental/Other",
+                        owner_name: maskedName,
                         occupancy: isOwnerOcc ? "Owner" : "Rental/Other",
                         county: result.county_name,
                         legal_desc: result.legal_description
@@ -108,7 +111,7 @@ async function fetchPropertyData(addressStr) {
             SingleLine: addressStr,
             f: 'json',
             outSR: 102100,
-            outFields: 'City,Region,Postal' // Explicitly request City, State, Zip
+            outFields: 'City,Region,Postal'
         });
 
         const geoRes = await fetch(`${MD_LOCATOR_URL}?${geocodeParams}`);
@@ -118,14 +121,13 @@ async function fetchPropertyData(addressStr) {
         
         const bestMatch = geoData.candidates[0];
         
-        // Extract Geocode Attributes
         const geoCity = bestMatch.attributes?.City || '';
         const geoState = bestMatch.attributes?.Region || 'MD';
         const geoZip = bestMatch.attributes?.Postal || '';
 
         const queryParams = new URLSearchParams({
             where: `UPPER(address) LIKE UPPER('%${bestMatch.address.split(',')[0]}%')`,
-            outFields: 'address,occ_status,county_name,legal_description', // Removed owner_name
+            outFields: 'address,occ_status,county_name,legal_description',
             f: 'json',
             resultRecordCount: 1
         });
@@ -177,11 +179,11 @@ function renderResults(data) {
     `;
 
     data.forEach(item => {
-        // Format city/state/zip display cleanly
         const cityStateZip = item.city ? `${item.city}, ${item.state} ${item.zip}` : '---';
         
-        // Force the display to only show Occupancy status instead of any old real names from Firebase
-        const displayOwner = item.occupancy === 'Owner' ? 'Owner Occupied' : 'Rental/Other';
+        // MASKING LEVEL 2: Force generic text in the UI even if viewing old unmasked data
+        const isActuallyOwner = item.occupancy === 'Owner' || item.occ_status === 'H';
+        const displayOwner = isActuallyOwner ? 'Owner Occupied' : 'Rental/Other';
 
         html += `
             <tr class="hover:bg-gray-50 transition-colors">
@@ -190,8 +192,8 @@ function renderResults(data) {
                 <td class="p-4 text-sm text-gray-600">${cityStateZip}</td>
                 <td class="p-4 text-sm text-gray-600 italic">${displayOwner}</td>
                 <td class="p-4">
-                    <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${item.occupancy === 'Owner' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
-                        ${item.occupancy}
+                    <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${isActuallyOwner ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
+                        ${isActuallyOwner ? 'Owner' : 'Rental'}
                     </span>
                 </td>
             </tr>
@@ -245,7 +247,6 @@ async function loadHistory() {
             batches.push({ id: doc.id, ...doc.data() });
         });
 
-        // Sort by newest first
         batches.sort((a, b) => b.timestamp - a.timestamp);
 
         if (batches.length === 0) {
@@ -268,7 +269,6 @@ async function loadHistory() {
                     </button>
                 </td>
             `;
-            // Attach full data temporarily to window for viewing
             window[`batchData_${batch.id}`] = batch.data;
             tableBody.appendChild(tr);
         });
@@ -294,15 +294,13 @@ window.deleteBatch = async function(batchId) {
         try {
             await deleteDoc(doc(getCollectionRef(), batchId));
             showToast("Batch deleted", "success");
-            loadHistory(); // Refresh the table
+            loadHistory();
         } catch (error) {
             console.error("Error deleting doc: ", error);
             showToast("Failed to delete", "error");
         }
     }
 };
-
-// --- Authentication UI Handlers ---
 
 window.googleLogin = async function() {
     const provider = new GoogleAuthProvider();
@@ -333,8 +331,6 @@ window.logout = async function() {
         console.error(error);
     }
 };
-
-// --- UI Helpers ---
 
 window.switchTab = function(tab) {
     currentTab = tab;
@@ -391,5 +387,4 @@ function showToast(msg, type = "success") {
     }, 3000);
 }
 
-// Expose main run function to window
 window.runLookupAndFormat = runLookupAndFormat;
