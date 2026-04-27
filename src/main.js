@@ -1,6 +1,6 @@
 /**
  * Cardinal Address Lookup - Core Logic
- * Focus: Grouping, Bulk Communication, and Persistence
+ * Focus: Grouping, System Sharing, and History Management
  */
 
 import { initializeApp } from "firebase/app";
@@ -24,14 +24,16 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'cardinal-lookup';
 let currentUser = null;
-let currentBatchId = null; // Tracks the ID of the batch currently being viewed
+let currentBatchId = null; 
+let pendingAction = null; 
 
 // --- API Constants ---
 const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
-const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_MultiroleLocator/GeocodeServer/findAddressCandidates";
+// Switched to CompositeLocator to fix 403 errors in Bethesda and other regions
+const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_CompositeLocator/GeocodeServer/findAddressCandidates";
 
 // --- State Management ---
-let groupedBatch = []; // Stores data in chunks of 5
+let groupedBatch = []; 
 let currentTab = 'formatter';
 
 // --- Auth State Listener ---
@@ -41,7 +43,19 @@ onAuthStateChanged(auth, (user) => {
         document.getElementById('login-screen').classList.add('hidden');
         document.getElementById('app-content').classList.remove('hidden');
         document.getElementById('user-display').innerText = user.isAnonymous ? "Guest Session" : (user.displayName || "Logged In");
-        if (currentTab === 'database') loadHistory();
+        
+        const historyBtn = document.getElementById('btn-tab-database');
+        const saveBtn = document.getElementById('btn-save-container');
+        
+        if (user.isAnonymous) {
+            if (historyBtn) historyBtn.classList.add('hidden');
+            if (saveBtn) saveBtn.classList.add('hidden');
+            if (currentTab === 'database') window.switchTab('formatter');
+        } else {
+            if (historyBtn) historyBtn.classList.remove('hidden');
+        }
+
+        if (currentTab === 'database' && !user.isAnonymous) loadHistory();
     } else {
         document.getElementById('login-screen').classList.remove('hidden');
         document.getElementById('app-content').classList.add('hidden');
@@ -86,7 +100,7 @@ async function runLookupAndFormat() {
 
     startProgressModal(validAddresses.length);
     const results = [];
-    currentBatchId = null; // New lookup, not associated with a doc yet
+    currentBatchId = null; 
     
     for (let i = 0; i < validAddresses.length; i++) {
         const item = validAddresses[i];
@@ -102,7 +116,6 @@ async function runLookupAndFormat() {
                         city: result.city,
                         zip: result.zip,
                         occupancy: isOwnerOcc ? "Owner" : "Rental/Other",
-                        status_flag: result.raw_ooi || '---',
                         sdat_url: result.sdat_url
                     });
                 }
@@ -116,9 +129,18 @@ async function runLookupAndFormat() {
     showToast(`Found ${results.length} properties in ${groupedBatch.length} groups.`);
 }
 
+/**
+ * Queries Maryland iMAP
+ * Includes JURSCODE = 'PRIN' filter to exclude other counties
+ */
 async function fetchPropertyData(addressStr) {
     try {
-        const geocodeParams = new URLSearchParams({ SingleLine: addressStr, f: 'json', outSR: 102100, outFields: 'City,Region,Postal' });
+        const geocodeParams = new URLSearchParams({ 
+            SingleLine: addressStr, 
+            f: 'json', 
+            outSR: 102100 
+        });
+
         const geoRes = await fetch(`${MD_LOCATOR_URL}?${geocodeParams}`);
         const geoData = await geoRes.json();
         if (!geoData.candidates || geoData.candidates.length === 0) return null;
@@ -127,7 +149,8 @@ async function fetchPropertyData(addressStr) {
         const standardizedBase = bestMatch.address.split(',')[0].trim().toUpperCase();
 
         const queryParams = new URLSearchParams({
-            where: `UPPER(ADDRESS) LIKE '${standardizedBase}%'`,
+            // Filter added here to restrict search to Prince George's County (PRIN)
+            where: `UPPER(ADDRESS) LIKE '${standardizedBase}%' AND JURSCODE = 'PRIN'`,
             outFields: 'ADDRESS,OOI,SDATWEBADR',
             f: 'json',
             resultRecordCount: 1
@@ -140,8 +163,8 @@ async function fetchPropertyData(addressStr) {
             const attr = propData.features[0].attributes;
             return {
                 address_full: attr.ADDRESS,
-                city: bestMatch.attributes?.City || '',
-                zip: bestMatch.attributes?.Postal || '',
+                city: attr.CITY || bestMatch.attributes?.City || 'Unknown',
+                zip: attr.ZIPCODE || bestMatch.attributes?.Postal || '',
                 raw_ooi: attr.OOI, 
                 sdat_url: attr.SDATWEBADR
             };
@@ -152,9 +175,11 @@ async function fetchPropertyData(addressStr) {
 
 function renderResults(groups) {
     const canvas = document.getElementById('outputCanvas');
+    const saveContainer = document.getElementById('btn-save-container');
+
     if (groups.length === 0) {
         canvas.innerHTML = `<div class="p-12 text-center text-gray-400 font-medium">No properties found.</div>`;
-        document.getElementById('btn-save-container').classList.add('hidden');
+        if (saveContainer) saveContainer.classList.add('hidden');
         return;
     }
 
@@ -162,9 +187,6 @@ function renderResults(groups) {
 
     groups.forEach((group, gIdx) => {
         const isDone = group.completed;
-        const compiledAddresses = group.items.map(item => item.full_address).join(', ');
-        const smsLink = `sms:?body=Addresses: ${compiledAddresses}`;
-        const mailLink = `mailto:?subject=Property Batch ${gIdx+1}&body=Property List: %0D%0A${group.items.map(item => '- ' + item.full_address).join('%0D%0A')}`;
 
         html += `
             <div class="mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}">
@@ -176,10 +198,11 @@ function renderResults(groups) {
                     </div>
                     
                     <div class="flex items-center gap-2">
-                        <a href="${smsLink}" class="group-btn bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">SMS Group</a>
-                        <a href="${mailLink}" class="group-btn bg-red-50 text-cardinal px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-red-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">Email Group</a>
+                        <button onclick="shareGroup(${gIdx})" class="group-btn bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">
+                            Share Group
+                        </button>
                         <button onclick="toggleGroupComplete(${gIdx})" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
-                            ${isDone ? 'Undo Complete' : 'Complete Group'}
+                            ${isDone ? 'Undo' : 'Complete'}
                         </button>
                     </div>
                 </div>
@@ -192,18 +215,17 @@ function renderResults(groups) {
                                 <tr class="${isDone ? 'line-through text-gray-400' : ''}">
                                     <td class="p-4">
                                         <div class="text-sm font-bold">${item.full_address}</div>
-                                        <div class="text-[10px] uppercase text-gray-400">${item.city} ${item.zip}</div>
+                                        <div class="text-[10px] uppercase text-gray-400">${item.city}, MD ${item.zip}</div>
                                     </td>
                                     <td class="p-4">
                                         <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}">
                                             ${item.occupancy}
                                         </span>
                                     </td>
-                                    <td class="p-4 text-[10px] font-mono font-bold text-gray-400">${item.status_flag}</td>
                                     <td class="p-4 text-right">
                                         <div class="flex justify-end gap-2">
-                                            <a href="${item.sdat_url}" target="_blank" class="p-1.5 bg-gray-50 rounded hover:bg-gray-100 ${isDone ? 'pointer-events-none' : ''}">
-                                                <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                                            <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}">
+                                                SDAT LINK
                                             </a>
                                         </div>
                                     </td>
@@ -217,29 +239,55 @@ function renderResults(groups) {
     });
 
     canvas.innerHTML = html;
-    if (currentUser && !currentUser.isAnonymous) {
-        document.getElementById('btn-save-container').classList.remove('hidden');
+    
+    if (saveContainer) {
+        if (currentUser && !currentUser.isAnonymous) {
+            saveContainer.classList.remove('hidden');
+        } else {
+            saveContainer.classList.add('hidden');
+        }
     }
 }
 
 /**
- * Persistence: Toggle completion state and save to Firebase
+ * Communicates the group via System Share API
  */
+window.shareGroup = async function(idx) {
+    const group = groupedBatch[idx];
+    const textContent = `Cardinal Property Group ${idx + 1}:\n` + 
+        group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  SDAT: ${i.sdat_url}`).join('\n\n');
+
+    if (navigator.share) {
+        try {
+            await navigator.share({
+                title: `Property Group ${idx + 1}`,
+                text: textContent
+            });
+        } catch (e) {
+            console.error("Share failed", e);
+        }
+    } else {
+        const dummy = document.createElement("textarea");
+        document.body.appendChild(dummy);
+        dummy.value = textContent;
+        dummy.select();
+        document.execCommand("copy");
+        document.body.removeChild(dummy);
+        showToast("Group copied to clipboard!");
+    }
+};
+
 window.toggleGroupComplete = async function(idx) {
     groupedBatch[idx].completed = !groupedBatch[idx].completed;
-    
-    // Update UI immediately
     renderResults(groupedBatch);
 
-    // If we are currently viewing a saved batch from history, update it in Firebase too
     if (currentBatchId) {
         try {
             const batchRef = doc(getCollectionRef(), currentBatchId);
             await updateDoc(batchRef, { data: groupedBatch });
-            showToast("Group status synced to cloud", "success");
+            showToast("Status synced", "success");
         } catch (e) {
-            console.error(e);
-            showToast("Failed to sync status", "error");
+            showToast("Failed to sync", "error");
         }
     }
 };
@@ -251,7 +299,7 @@ function getCollectionRef() {
 }
 
 window.saveOrUpdateBatch = function() {
-    if (!currentUser || currentUser.isAnonymous) return showToast("Must sign in with Google to save", "error");
+    if (!currentUser || currentUser.isAnonymous) return showToast("Guests cannot save", "error");
     if (groupedBatch.length === 0) return showToast("No data to save", "error");
 
     const modal = document.getElementById('save-batch-modal');
@@ -260,11 +308,6 @@ window.saveOrUpdateBatch = function() {
         input.value = `Batch ${new Date().toLocaleDateString()}`;
         modal.classList.remove('hidden');
     }
-};
-
-window.closeSaveModal = function() {
-    const modal = document.getElementById('save-batch-modal');
-    if (modal) modal.classList.add('hidden');
 };
 
 window.confirmSave = async function() {
@@ -277,7 +320,7 @@ window.confirmSave = async function() {
             data: groupedBatch,
             timestamp: Date.now()
         });
-        currentBatchId = docRef.id; // Assign ID so future "Complete" clicks update this doc
+        currentBatchId = docRef.id; 
         showToast("Batch saved!", "success");
         window.closeSaveModal();
     } catch (error) {
@@ -286,9 +329,9 @@ window.confirmSave = async function() {
 };
 
 async function loadHistory() {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.isAnonymous) return;
     const tableBody = document.getElementById("db-table-body");
-    tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-500 italic">Loading history...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-400 italic">Loading history...</td></tr>';
 
     try {
         const querySnapshot = await getDocs(getCollectionRef());
@@ -297,7 +340,7 @@ async function loadHistory() {
         batches.sort((a, b) => b.timestamp - a.timestamp);
 
         if (batches.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-500">No batches found.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-500">No batches found.</td></tr>';
             return;
         }
 
@@ -310,14 +353,19 @@ async function loadHistory() {
                     <div class="text-[10px] text-gray-400">${new Date(batch.timestamp).toLocaleString()} • ${batch.data.length} Groups</div>
                 </td>
                 <td class="px-6 py-4 text-right">
-                    <button onclick="window.viewBatch('${batch.id}')" class="text-cardinal font-bold hover:underline text-sm uppercase">View</button>
+                    <div class="flex justify-end gap-3 items-center">
+                        <button onclick="window.viewBatch('${batch.id}')" class="text-cardinal font-black hover:underline text-[10px] uppercase">View</button>
+                        <button onclick="window.requestDeleteBatch('${batch.id}')" class="text-gray-300 hover:text-red-600 transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </div>
                 </td>
             `;
             window[`batchData_${batch.id}`] = { data: batch.data, id: batch.id };
             tableBody.appendChild(tr);
         });
     } catch (error) {
-        tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-red-500">Error loading history</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-red-500">Error loading history</td></tr>';
     }
 }
 
@@ -330,6 +378,56 @@ window.viewBatch = function(batchId) {
         window.switchTab('formatter');
         showToast("Batch loaded");
     }
+};
+
+/**
+ * Delete History Actions
+ */
+window.requestDeleteBatch = function(id) {
+    openConfirmModal("Delete this batch?", "This action cannot be undone.", async () => {
+        try {
+            await deleteDoc(doc(getCollectionRef(), id));
+            showToast("Batch deleted");
+            loadHistory();
+        } catch (e) { showToast("Delete failed", "error"); }
+    });
+};
+
+window.requestClearAllHistory = function() {
+    openConfirmModal("Clear All History?", "This will permanently delete every batch you have saved.", async () => {
+        try {
+            const querySnapshot = await getDocs(getCollectionRef());
+            const deletes = [];
+            querySnapshot.forEach(d => deletes.push(deleteDoc(d.ref)));
+            await Promise.all(deletes);
+            showToast("All history cleared");
+            loadHistory();
+        } catch (e) { showToast("Clear failed", "error"); }
+    });
+};
+
+// --- Modal Helpers ---
+
+function openConfirmModal(title, msg, callback) {
+    const modal = document.getElementById('confirm-modal');
+    document.getElementById('confirm-modal-title').innerText = title;
+    document.getElementById('confirm-modal-msg').innerText = msg;
+    pendingAction = callback;
+    modal.classList.remove('hidden');
+}
+
+window.closeConfirmModal = function() {
+    document.getElementById('confirm-modal').classList.add('hidden');
+    pendingAction = null;
+};
+
+window.executeConfirmedAction = async function() {
+    if (pendingAction) await pendingAction();
+    window.closeConfirmModal();
+};
+
+window.closeSaveModal = function() {
+    document.getElementById('save-batch-modal').classList.add('hidden');
 };
 
 // --- Auth Handlers ---
@@ -345,7 +443,7 @@ window.googleLogin = async function() {
 window.guestLogin = async function() {
     try {
         await signInAnonymously(auth);
-        showToast("Continuing as guest (No Cloud Saving)");
+        showToast("Guest session started");
     } catch (error) { showToast("Guest login failed", "error"); }
 };
 
@@ -355,6 +453,10 @@ window.logout = async function() {
 };
 
 window.switchTab = function(tab) {
+    if (currentUser?.isAnonymous && tab === 'database') {
+        showToast("Guest users cannot access history", "error");
+        return;
+    }
     currentTab = tab;
     document.getElementById("tab-formatter").classList.toggle("hidden", tab !== "formatter");
     document.getElementById("tab-database").classList.toggle("hidden", tab !== "database");
