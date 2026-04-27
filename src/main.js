@@ -1,11 +1,11 @@
 /**
  * Cardinal Address Lookup - Core Logic
- * Focus: Maryland iMAP Property Data Integration & Firebase Storage
+ * Focus: Grouping, Bulk Communication, and Persistence
  */
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, getDocs, updateDoc, doc, deleteDoc } from "firebase/firestore";
 
 import './style.css'; 
 
@@ -24,13 +24,14 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'cardinal-lookup';
 let currentUser = null;
+let currentBatchId = null; // Tracks the ID of the batch currently being viewed
 
 // --- API Constants ---
 const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
 const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_MultiroleLocator/GeocodeServer/findAddressCandidates";
 
 // --- State Management ---
-let currentBatch = [];
+let groupedBatch = []; // Stores data in chunks of 5
 let currentTab = 'formatter';
 
 // --- Auth State Listener ---
@@ -48,6 +49,21 @@ onAuthStateChanged(auth, (user) => {
 });
 
 /**
+ * Utility to chunk array into groups of 5
+ */
+function chunkArray(array, size) {
+    const result = [];
+    for (let i = 0; i < array.length; i += size) {
+        result.push({
+            id: i / size,
+            completed: false,
+            items: array.slice(i, i + size)
+        });
+    }
+    return result;
+}
+
+/**
  * Main execution function
  */
 async function runLookupAndFormat() {
@@ -56,28 +72,21 @@ async function runLookupAndFormat() {
     
     if (!input.trim()) return showToast("Please enter at least one address.", "error");
     
-    // --- DATA CLEANING STEP ---
     const lines = input.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    
     const validAddresses = [];
+    
     for (let line of lines) {
         if (line.toLowerCase().includes("do not call")) continue;
-
         let cleanAddr = line.split(/Default|Never visited|\d{2}\/\d{2}\/\d{4}|R-\d+/i)[0].trim();
         cleanAddr = cleanAddr.replace(/^(\d+)([a-zA-Z])/, '$1 $2');
-
-        if (cleanAddr) {
-            validAddresses.push({
-                original: line,
-                cleaned: cleanAddr
-            });
-        }
+        if (cleanAddr) validAddresses.push({ original: line, cleaned: cleanAddr });
     }
 
-    if (validAddresses.length === 0) return showToast("No valid addresses found to process.", "error");
+    if (validAddresses.length === 0) return showToast("No valid addresses found.", "error");
 
     startProgressModal(validAddresses.length);
-    currentBatch = [];
+    const results = [];
+    currentBatchId = null; // New lookup, not associated with a doc yet
     
     for (let i = 0; i < validAddresses.length; i++) {
         const item = validAddresses[i];
@@ -85,54 +94,33 @@ async function runLookupAndFormat() {
         
         try {
             const result = await fetchPropertyData(item.cleaned);
-            
             if (result) {
-                const isOwnerOcc = result.occ_status === "H";
-                
+                const isOwnerOcc = result.raw_ooi && result.raw_ooi.includes("H");
                 if (!ownerOccupiedOnly || (ownerOccupiedOnly && isOwnerOcc)) {
-                    const maskedName = isOwnerOcc ? "Owner Occupied" : "Rental/Other";
-
-                    currentBatch.push({
-                        original: item.original,
-                        search_term: item.cleaned,
+                    results.push({
                         full_address: result.address_full,
                         city: result.city,
-                        state: result.state,
                         zip: result.zip,
-                        owner_name: maskedName,
                         occupancy: isOwnerOcc ? "Owner" : "Rental/Other",
-                        year_built: result.year_built,
-                        sqft: result.sqft,
-                        value: result.value,
+                        status_flag: result.raw_ooi || '---',
                         sdat_url: result.sdat_url
                     });
                 }
             }
-        } catch (err) {
-            console.error(`Error processing ${item.cleaned}:`, err);
-        }
+        } catch (err) { console.error(err); }
     }
 
-    renderResults(currentBatch);
+    groupedBatch = chunkArray(results, 5);
+    renderResults(groupedBatch);
     hideProgressModal();
-    showToast(`Processed ${validAddresses.length} lines. Found ${currentBatch.length} matches.`);
+    showToast(`Found ${results.length} properties in ${groupedBatch.length} groups.`);
 }
 
-/**
- * Queries Maryland iMAP
- */
 async function fetchPropertyData(addressStr) {
     try {
-        const geocodeParams = new URLSearchParams({
-            SingleLine: addressStr,
-            f: 'json',
-            outSR: 102100,
-            outFields: 'City,Region,Postal'
-        });
-
+        const geocodeParams = new URLSearchParams({ SingleLine: addressStr, f: 'json', outSR: 102100, outFields: 'City,Region,Postal' });
         const geoRes = await fetch(`${MD_LOCATOR_URL}?${geocodeParams}`);
         const geoData = await geoRes.json();
-        
         if (!geoData.candidates || geoData.candidates.length === 0) return null;
         
         const bestMatch = geoData.candidates[0];
@@ -140,7 +128,7 @@ async function fetchPropertyData(addressStr) {
 
         const queryParams = new URLSearchParams({
             where: `UPPER(ADDRESS) LIKE '${standardizedBase}%'`,
-            outFields: 'ADDRESS,OOI,YEARBLT,SQFTSTRC,NFMTTLVL,SDATWEBADR',
+            outFields: 'ADDRESS,OOI,SDATWEBADR',
             f: 'json',
             resultRecordCount: 1
         });
@@ -153,80 +141,108 @@ async function fetchPropertyData(addressStr) {
             return {
                 address_full: attr.ADDRESS,
                 city: bestMatch.attributes?.City || '',
-                state: bestMatch.attributes?.Region || 'MD',
                 zip: bestMatch.attributes?.Postal || '',
-                occ_status: attr.OOI,
-                year_built: attr.YEARBLT,
-                sqft: attr.SQFTSTRC,
-                value: attr.NFMTTLVL,
+                raw_ooi: attr.OOI, 
                 sdat_url: attr.SDATWEBADR
             };
         }
-    } catch (e) {
-        throw e;
-    }
+    } catch (e) { throw e; }
     return null;
 }
 
-/**
- * UI Rendering logic
- */
-function renderResults(data) {
+function renderResults(groups) {
     const canvas = document.getElementById('outputCanvas');
-    if (data.length === 0) {
-        canvas.innerHTML = `<div class="p-12 text-center text-gray-400 font-medium">No properties found matching your criteria.</div>`;
+    if (groups.length === 0) {
+        canvas.innerHTML = `<div class="p-12 text-center text-gray-400 font-medium">No properties found.</div>`;
         document.getElementById('btn-save-container').classList.add('hidden');
         return;
     }
 
-    let html = `
-        <div class="overflow-x-auto">
-        <table class="w-full text-left border-collapse min-w-[800px]">
-            <thead class="bg-gray-100 text-[10px] uppercase font-bold text-gray-500">
-                <tr>
-                    <th class="p-4 border-b">Standardized Address</th>
-                    <th class="p-4 border-b">Status</th>
-                    <th class="p-4 border-b">Property Details</th>
-                    <th class="p-4 border-b">Actions</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200">
-    `;
+    let html = '';
 
-    data.forEach(item => {
-        const valueFormatted = item.value ? `$${Number(item.value).toLocaleString()}` : 'N/A';
+    groups.forEach((group, gIdx) => {
+        const isDone = group.completed;
+        const compiledAddresses = group.items.map(item => item.full_address).join(', ');
+        const smsLink = `sms:?body=Addresses: ${compiledAddresses}`;
+        const mailLink = `mailto:?subject=Property Batch ${gIdx+1}&body=Property List: %0D%0A${group.items.map(item => '- ' + item.full_address).join('%0D%0A')}`;
 
         html += `
-            <tr class="hover:bg-gray-50 transition-colors">
-                <td class="p-4">
-                    <div class="text-sm font-bold text-gray-800">${item.full_address || '---'}</div>
-                    <div class="text-[10px] text-gray-400 uppercase">${item.city}, ${item.state} ${item.zip}</div>
-                    <div class="text-[9px] text-gray-300 mt-1 italic">Searched: ${item.search_term}</div>
-                </td>
-                <td class="p-4">
-                    <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${item.occupancy === 'Owner' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
-                        ${item.occupancy}
-                    </span>
-                </td>
-                <td class="p-4">
-                    <div class="text-[11px] text-gray-600">Built: <b>${item.year_built || 'N/A'}</b></div>
-                    <div class="text-[11px] text-gray-600">Size: <b>${item.sqft || '0'} sqft</b></div>
-                    <div class="text-[11px] text-gray-600">Value: <b>${valueFormatted}</b></div>
-                </td>
-                <td class="p-4">
-                    <a href="${item.sdat_url}" target="_blank" class="bg-cardinal text-white px-3 py-1 rounded text-[10px] font-bold hover:bg-red-700 transition-colors inline-block">SDAT PORTAL ↗</a>
-                </td>
-            </tr>
+            <div class="mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}">
+                <!-- Group Header -->
+                <div class="bg-gray-50 px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4">
+                    <div class="flex items-center gap-3">
+                        <span class="bg-cardinal text-white text-[10px] font-black px-2 py-1 rounded uppercase tracking-tighter">Group ${gIdx + 1}</span>
+                        <h3 class="text-sm font-bold text-gray-800 ${isDone ? 'line-through' : ''}">${group.items.length} Properties</h3>
+                    </div>
+                    
+                    <div class="flex items-center gap-2">
+                        <a href="${smsLink}" class="group-btn bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">SMS Group</a>
+                        <a href="${mailLink}" class="group-btn bg-red-50 text-cardinal px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-red-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">Email Group</a>
+                        <button onclick="toggleGroupComplete(${gIdx})" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
+                            ${isDone ? 'Undo Complete' : 'Complete Group'}
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <tbody class="divide-y divide-gray-100">
+                            ${group.items.map(item => `
+                                <tr class="${isDone ? 'line-through text-gray-400' : ''}">
+                                    <td class="p-4">
+                                        <div class="text-sm font-bold">${item.full_address}</div>
+                                        <div class="text-[10px] uppercase text-gray-400">${item.city} ${item.zip}</div>
+                                    </td>
+                                    <td class="p-4">
+                                        <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}">
+                                            ${item.occupancy}
+                                        </span>
+                                    </td>
+                                    <td class="p-4 text-[10px] font-mono font-bold text-gray-400">${item.status_flag}</td>
+                                    <td class="p-4 text-right">
+                                        <div class="flex justify-end gap-2">
+                                            <a href="${item.sdat_url}" target="_blank" class="p-1.5 bg-gray-50 rounded hover:bg-gray-100 ${isDone ? 'pointer-events-none' : ''}">
+                                                <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         `;
     });
 
-    html += `</tbody></table></div>`;
     canvas.innerHTML = html;
-    
     if (currentUser && !currentUser.isAnonymous) {
         document.getElementById('btn-save-container').classList.remove('hidden');
     }
 }
+
+/**
+ * Persistence: Toggle completion state and save to Firebase
+ */
+window.toggleGroupComplete = async function(idx) {
+    groupedBatch[idx].completed = !groupedBatch[idx].completed;
+    
+    // Update UI immediately
+    renderResults(groupedBatch);
+
+    // If we are currently viewing a saved batch from history, update it in Firebase too
+    if (currentBatchId) {
+        try {
+            const batchRef = doc(getCollectionRef(), currentBatchId);
+            await updateDoc(batchRef, { data: groupedBatch });
+            showToast("Group status synced to cloud", "success");
+        } catch (e) {
+            console.error(e);
+            showToast("Failed to sync status", "error");
+        }
+    }
+};
 
 // --- Firebase Operations ---
 
@@ -234,14 +250,12 @@ function getCollectionRef() {
     return collection(db, 'artifacts', appId, 'users', currentUser.uid, 'batches');
 }
 
-// Opens the naming modal instead of a browser prompt
 window.saveOrUpdateBatch = function() {
-    if (!currentUser || currentUser.isAnonymous) return showToast("Must sign in with Google to save history", "error");
-    if (currentBatch.length === 0) return showToast("No data to save", "error");
+    if (!currentUser || currentUser.isAnonymous) return showToast("Must sign in with Google to save", "error");
+    if (groupedBatch.length === 0) return showToast("No data to save", "error");
 
     const modal = document.getElementById('save-batch-modal');
     const input = document.getElementById('batch-name-input');
-    
     if (modal && input) {
         input.value = `Batch ${new Date().toLocaleDateString()}`;
         modal.classList.remove('hidden');
@@ -253,21 +267,21 @@ window.closeSaveModal = function() {
     if (modal) modal.classList.add('hidden');
 };
 
-// The actual logic that runs when "Confirm Save" is clicked in the modal
 window.confirmSave = async function() {
     const batchName = document.getElementById('batch-name-input').value.trim();
-    if (!batchName) return showToast("Please enter a name", "error");
+    if (!batchName) return showToast("Enter a name", "error");
 
     try {
-        await addDoc(getCollectionRef(), {
+        const docRef = await addDoc(getCollectionRef(), {
             name: batchName,
-            data: currentBatch,
+            data: groupedBatch,
             timestamp: Date.now()
         });
-        showToast("Batch saved to history!", "success");
+        currentBatchId = docRef.id; // Assign ID so future "Complete" clicks update this doc
+        showToast("Batch saved!", "success");
         window.closeSaveModal();
     } catch (error) {
-        showToast("Error saving batch", "error");
+        showToast("Save failed", "error");
     }
 };
 
@@ -283,7 +297,7 @@ async function loadHistory() {
         batches.sort((a, b) => b.timestamp - a.timestamp);
 
         if (batches.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-500">No saved batches found.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-500">No batches found.</td></tr>';
             return;
         }
 
@@ -293,13 +307,13 @@ async function loadHistory() {
             tr.innerHTML = `
                 <td class="px-6 py-4">
                     <div class="font-bold text-gray-800">${batch.name}</div>
-                    <div class="text-[10px] text-gray-400 font-normal">${new Date(batch.timestamp).toLocaleString()} • ${batch.data.length} items</div>
+                    <div class="text-[10px] text-gray-400">${new Date(batch.timestamp).toLocaleString()} • ${batch.data.length} Groups</div>
                 </td>
                 <td class="px-6 py-4 text-right">
-                    <button onclick="window.viewBatch('${batch.id}')" class="text-cardinal font-bold hover:underline text-sm">View</button>
+                    <button onclick="window.viewBatch('${batch.id}')" class="text-cardinal font-bold hover:underline text-sm uppercase">View</button>
                 </td>
             `;
-            window[`batchData_${batch.id}`] = batch.data;
+            window[`batchData_${batch.id}`] = { data: batch.data, id: batch.id };
             tableBody.appendChild(tr);
         });
     } catch (error) {
@@ -308,12 +322,13 @@ async function loadHistory() {
 }
 
 window.viewBatch = function(batchId) {
-    const data = window[`batchData_${batchId}`];
-    if (data) {
-        currentBatch = data;
-        renderResults(data);
+    const entry = window[`batchData_${batchId}`];
+    if (entry) {
+        groupedBatch = entry.data;
+        currentBatchId = entry.id;
+        renderResults(groupedBatch);
         window.switchTab('formatter');
-        showToast("Batch loaded successfully");
+        showToast("Batch loaded");
     }
 };
 
@@ -323,19 +338,15 @@ window.googleLogin = async function() {
     try {
         const provider = new GoogleAuthProvider();
         await signInWithPopup(auth, provider);
-        showToast("Logged in successfully");
-    } catch (error) {
-        showToast("Login failed", "error");
-    }
+        showToast("Logged in");
+    } catch (error) { showToast("Login failed", "error"); }
 };
 
 window.guestLogin = async function() {
     try {
         await signInAnonymously(auth);
-        showToast("Continuing as guest (Save disabled)");
-    } catch (error) {
-        showToast("Guest login failed", "error");
-    }
+        showToast("Continuing as guest (No Cloud Saving)");
+    } catch (error) { showToast("Guest login failed", "error"); }
 };
 
 window.logout = async function() {
@@ -361,25 +372,21 @@ window.switchTab = function(tab) {
     }
 };
 
-// --- UI Progress Helpers ---
+// --- UI Helpers ---
 
 function startProgressModal(total) {
     const modal = document.getElementById('search-modal');
-    const bar = document.getElementById('modal-progress-bar');
-    const text = document.getElementById('modal-progress-text');
     if (modal) modal.classList.remove('hidden');
-    if (bar) bar.style.width = '0%';
-    if (text) text.innerText = `Starting... (0/${total})`;
 }
 
-function updateProgress(current, total, currentAddress) {
+function updateProgress(current, total, addr) {
     const pct = Math.round((current / total) * 100);
     const bar = document.getElementById('modal-progress-bar');
     const text = document.getElementById('modal-progress-text');
-    const addr = document.getElementById('current-search-address');
+    const display = document.getElementById('current-search-address');
     if (bar) bar.style.width = `${pct}%`;
-    if (text) text.innerText = `${pct}% Complete (${current}/${total})`;
-    if (addr) addr.innerText = currentAddress;
+    if (text) text.innerText = `${pct}% (${current}/${total})`;
+    if (display) display.innerText = addr;
 }
 
 function hideProgressModal() {
