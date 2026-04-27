@@ -8,8 +8,8 @@
     <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
     
     <!-- Changed to a relative path (removed leading slash) to fix 404 in subdirectories -->
-  <script type="module" crossorigin src="./assets/index-BcD4AEXo.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DJUk5R16.css">
+  <script type="module" crossorigin src="./assets/index-CakIItVL.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DOCU78bS.css">
 </head>
 <body class="bg-gray-50 font-sans text-gray-900 h-screen flex flex-col relative">
 
@@ -111,6 +111,23 @@
             </div>
         </main>
     </div>
-    
+<!-- Save Batch Modal -->
+<div id="save-batch-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all">
+        <div class="bg-cardinal p-6 text-white text-center">
+            <h3 class="text-xl font-bold">Save to History</h3>
+            <p class="text-white/80 text-xs mt-1 uppercase tracking-widest font-medium">Keep track of your property batches</p>
+        </div>
+        <div class="p-8">
+            <label class="block text-gray-500 text-[10px] uppercase font-black mb-2 tracking-widest">Batch Name</label>
+            <input type="text" id="batch-name-input" class="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-4 py-3 text-gray-800 font-bold focus:border-cardinal focus:outline-none transition-all mb-6" placeholder="Enter batch name...">
+            
+            <div class="grid grid-cols-2 gap-4">
+                <button onclick="closeSaveModal()" class="w-full py-3 rounded-xl border-2 border-gray-100 text-gray-400 font-black text-xs uppercase hover:bg-gray-50 transition-all">Cancel</button>
+                <button onclick="confirmSave()" class="w-full py-3 rounded-xl bg-cardinal text-white font-black text-xs uppercase hover:shadow-lg hover:shadow-red-200 transition-all">Confirm Save</button>
+            </div>
+        </div>
+    </div>
+</div>
 </body>
 </html>
