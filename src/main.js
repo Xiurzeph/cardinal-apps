@@ -1,18 +1,15 @@
 /**
  * Cardinal Address Lookup - Core Logic
  * Focus: Maryland iMAP Property Data Integration & Firebase Storage
- * Feature: Auto-compiles Tailwind via style.css import
  */
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from "firebase/firestore";
 
-// This line tells Vite to compile your Tailwind CSS into the final build
 import './style.css'; 
 
 // --- Firebase Configuration ---
-// Securely loaded from your .env file
 const myFirebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
     authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -51,7 +48,7 @@ onAuthStateChanged(auth, (user) => {
 });
 
 /**
- * Main execution function triggered by the "Fetch" button.
+ * Main execution function
  */
 async function runLookupAndFormat() {
     const input = document.getElementById('csvInput').value;
@@ -59,51 +56,70 @@ async function runLookupAndFormat() {
     
     if (!input.trim()) return showToast("Please enter at least one address.", "error");
     
-    const rawAddresses = input.split('\n').map(a => a.trim()).filter(a => a.length > 0);
-    if (rawAddresses.length === 0) return;
+    // --- DATA CLEANING STEP ---
+    const lines = input.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    
+    const validAddresses = [];
+    for (let line of lines) {
+        if (line.toLowerCase().includes("do not call")) continue;
 
-    startProgressModal(rawAddresses.length);
+        let cleanAddr = line.split(/Default|Never visited|\d{2}\/\d{2}\/\d{4}|R-\d+/i)[0].trim();
+        cleanAddr = cleanAddr.replace(/^(\d+)([a-zA-Z])/, '$1 $2');
+
+        if (cleanAddr) {
+            validAddresses.push({
+                original: line,
+                cleaned: cleanAddr
+            });
+        }
+    }
+
+    if (validAddresses.length === 0) return showToast("No valid addresses found to process.", "error");
+
+    startProgressModal(validAddresses.length);
     currentBatch = [];
     
-    for (let i = 0; i < rawAddresses.length; i++) {
-        const address = rawAddresses[i];
-        updateProgress(i + 1, rawAddresses.length, address);
+    for (let i = 0; i < validAddresses.length; i++) {
+        const item = validAddresses[i];
+        updateProgress(i + 1, validAddresses.length, item.cleaned);
         
         try {
-            const result = await fetchPropertyData(address);
+            const result = await fetchPropertyData(item.cleaned);
             
             if (result) {
-                const isOwnerOcc = result.occ_status === "H"; // 'H' = Homestead/Owner Occupied
+                const isOwnerOcc = result.occ_status === "H";
                 
                 if (!ownerOccupiedOnly || (ownerOccupiedOnly && isOwnerOcc)) {
-                    // MASKING: We overwrite "John Doe" or API names with generic labels here
                     const maskedName = isOwnerOcc ? "Owner Occupied" : "Rental/Other";
 
                     currentBatch.push({
-                        original: address,
+                        original: item.original,
+                        search_term: item.cleaned,
                         full_address: result.address_full,
                         city: result.city,
                         state: result.state,
                         zip: result.zip,
                         owner_name: maskedName,
                         occupancy: isOwnerOcc ? "Owner" : "Rental/Other",
-                        county: result.county_name,
-                        legal_desc: result.legal_description
+                        year_built: result.year_built,
+                        sqft: result.sqft,
+                        value: result.value,
+                        sdat_url: result.sdat_url
                     });
                 }
             }
         } catch (err) {
-            console.error(`Error processing ${address}:`, err);
+            console.error(`Error processing ${item.cleaned}:`, err);
         }
     }
 
     renderResults(currentBatch);
     hideProgressModal();
-    showToast(`Processed ${rawAddresses.length} addresses. Found ${currentBatch.length} matches.`);
+    showToast(`Processed ${validAddresses.length} lines. Found ${currentBatch.length} matches.`);
 }
 
 /**
- * Queries Maryland iMAP for property details
+ * Queries Maryland iMAP
  */
 async function fetchPropertyData(addressStr) {
     try {
@@ -120,10 +136,11 @@ async function fetchPropertyData(addressStr) {
         if (!geoData.candidates || geoData.candidates.length === 0) return null;
         
         const bestMatch = geoData.candidates[0];
-        
+        const standardizedBase = bestMatch.address.split(',')[0].trim().toUpperCase();
+
         const queryParams = new URLSearchParams({
-            where: `UPPER(address) LIKE UPPER('%${bestMatch.address.split(',')[0]}%')`,
-            outFields: 'address,occ_status,county_name,legal_description',
+            where: `UPPER(ADDRESS) LIKE '${standardizedBase}%'`,
+            outFields: 'ADDRESS,OOI,YEARBLT,SQFTSTRC,NFMTTLVL,SDATWEBADR',
             f: 'json',
             resultRecordCount: 1
         });
@@ -134,13 +151,15 @@ async function fetchPropertyData(addressStr) {
         if (propData.features && propData.features.length > 0) {
             const attr = propData.features[0].attributes;
             return {
-                address_full: attr.address,
+                address_full: attr.ADDRESS,
                 city: bestMatch.attributes?.City || '',
                 state: bestMatch.attributes?.Region || 'MD',
                 zip: bestMatch.attributes?.Postal || '',
-                occ_status: attr.occ_status,
-                county_name: attr.county_name,
-                legal_description: attr.legal_description
+                occ_status: attr.OOI,
+                year_built: attr.YEARBLT,
+                sqft: attr.SQFTSTRC,
+                value: attr.NFMTTLVL,
+                sdat_url: attr.SDATWEBADR
             };
         }
     } catch (e) {
@@ -161,40 +180,50 @@ function renderResults(data) {
     }
 
     let html = `
-        <table class="w-full text-left border-collapse">
+        <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse min-w-[800px]">
             <thead class="bg-gray-100 text-[10px] uppercase font-bold text-gray-500">
                 <tr>
-                    <th class="p-4 border-b">Input Address</th>
                     <th class="p-4 border-b">Standardized Address</th>
-                    <th class="p-4 border-b">City, State, Zip</th>
-                    <th class="p-4 border-b">Owner</th>
                     <th class="p-4 border-b">Status</th>
+                    <th class="p-4 border-b">Property Details</th>
+                    <th class="p-4 border-b">Actions</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-200">
     `;
 
     data.forEach(item => {
-        const cityStateZip = item.city ? `${item.city}, ${item.state} ${item.zip}` : '---';
+        const valueFormatted = item.value ? `$${Number(item.value).toLocaleString()}` : 'N/A';
+
         html += `
             <tr class="hover:bg-gray-50 transition-colors">
-                <td class="p-4 text-xs font-mono text-gray-400">${item.original}</td>
-                <td class="p-4 text-sm font-bold text-gray-800">${item.full_address || '---'}</td>
-                <td class="p-4 text-sm text-gray-600">${cityStateZip}</td>
-                <td class="p-4 text-sm text-gray-600 italic font-medium">${item.owner_name}</td>
+                <td class="p-4">
+                    <div class="text-sm font-bold text-gray-800">${item.full_address || '---'}</div>
+                    <div class="text-[10px] text-gray-400 uppercase">${item.city}, ${item.state} ${item.zip}</div>
+                    <div class="text-[9px] text-gray-300 mt-1 italic">Searched: ${item.search_term}</div>
+                </td>
                 <td class="p-4">
                     <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${item.occupancy === 'Owner' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
                         ${item.occupancy}
                     </span>
                 </td>
+                <td class="p-4">
+                    <div class="text-[11px] text-gray-600">Built: <b>${item.year_built || 'N/A'}</b></div>
+                    <div class="text-[11px] text-gray-600">Size: <b>${item.sqft || '0'} sqft</b></div>
+                    <div class="text-[11px] text-gray-600">Value: <b>${valueFormatted}</b></div>
+                </td>
+                <td class="p-4">
+                    <a href="${item.sdat_url}" target="_blank" class="bg-cardinal text-white px-3 py-1 rounded text-[10px] font-bold hover:bg-red-700 transition-colors inline-block">SDAT PORTAL ↗</a>
+                </td>
             </tr>
         `;
     });
 
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
     canvas.innerHTML = html;
     
-    if (currentUser) {
+    if (currentUser && !currentUser.isAnonymous) {
         document.getElementById('btn-save-container').classList.remove('hidden');
     }
 }
@@ -205,12 +234,29 @@ function getCollectionRef() {
     return collection(db, 'artifacts', appId, 'users', currentUser.uid, 'batches');
 }
 
-window.saveOrUpdateBatch = async function() {
+// Opens the naming modal instead of a browser prompt
+window.saveOrUpdateBatch = function() {
     if (!currentUser || currentUser.isAnonymous) return showToast("Must sign in with Google to save history", "error");
     if (currentBatch.length === 0) return showToast("No data to save", "error");
 
-    const batchName = prompt("Enter a name for this batch:");
-    if (!batchName) return;
+    const modal = document.getElementById('save-batch-modal');
+    const input = document.getElementById('batch-name-input');
+    
+    if (modal && input) {
+        input.value = `Batch ${new Date().toLocaleDateString()}`;
+        modal.classList.remove('hidden');
+    }
+};
+
+window.closeSaveModal = function() {
+    const modal = document.getElementById('save-batch-modal');
+    if (modal) modal.classList.add('hidden');
+};
+
+// The actual logic that runs when "Confirm Save" is clicked in the modal
+window.confirmSave = async function() {
+    const batchName = document.getElementById('batch-name-input').value.trim();
+    if (!batchName) return showToast("Please enter a name", "error");
 
     try {
         await addDoc(getCollectionRef(), {
@@ -219,6 +265,7 @@ window.saveOrUpdateBatch = async function() {
             timestamp: Date.now()
         });
         showToast("Batch saved to history!", "success");
+        window.closeSaveModal();
     } catch (error) {
         showToast("Error saving batch", "error");
     }
@@ -301,17 +348,28 @@ window.switchTab = function(tab) {
     document.getElementById("tab-formatter").classList.toggle("hidden", tab !== "formatter");
     document.getElementById("tab-database").classList.toggle("hidden", tab !== "database");
     
-    document.getElementById("btn-tab-formatter").className = tab === "formatter" ? "tab-active py-1 transition-colors" : "text-gray-400 py-1 hover:text-gray-600 transition-colors";
-    document.getElementById("btn-tab-database").className = tab === "database" ? "tab-active py-1 transition-colors" : "text-gray-400 py-1 hover:text-gray-600 transition-colors";
-
-    if (tab === 'database') loadHistory();
+    const fmtBtn = document.getElementById("btn-tab-formatter");
+    const dbBtn = document.getElementById("btn-tab-database");
+    
+    if (tab === "formatter") {
+        fmtBtn.classList.add("tab-active");
+        dbBtn.classList.remove("tab-active");
+    } else {
+        dbBtn.classList.add("tab-active");
+        fmtBtn.classList.remove("tab-active");
+        loadHistory();
+    }
 };
 
 // --- UI Progress Helpers ---
 
 function startProgressModal(total) {
     const modal = document.getElementById('search-modal');
+    const bar = document.getElementById('modal-progress-bar');
+    const text = document.getElementById('modal-progress-text');
     if (modal) modal.classList.remove('hidden');
+    if (bar) bar.style.width = '0%';
+    if (text) text.innerText = `Starting... (0/${total})`;
 }
 
 function updateProgress(current, total, currentAddress) {
