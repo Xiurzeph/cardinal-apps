@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  // REPLACE 'cardinal-apps' WITH YOUR EXACT GITHUB REPO NAME
-  base: '/cardinal-apps/', 
+  // Using './' (relative path) is the best way to prevent 404s in GitHub subfolders.
+  // It works automatically without needing to hardcode 'cardinal-apps'.
+  base: './', 
+  build: {
+    outDir: 'dist',
+    // Ensures all CSS/JS assets are organized in the assets folder
+    assetsDir: 'assets',
+  }
 })
