@@ -141,26 +141,37 @@ async function fetchPropertyData(addressStr) {
         const geocodeParams = new URLSearchParams({ 
             SingleLine: biasedSearch, 
             f: 'json', 
-            outSR: 102100 
+            outSR: 102100,
+            outFields: 'County' // FIX 1: Explicitly request the County attribute
         });
 
         const geoRes = await fetch(`${MD_LOCATOR_URL}?${geocodeParams}`);
         const geoData = await geoRes.json();
-        if (!geoData.candidates || geoData.candidates.length === 0) return null;
         
-        // PRIORITIZATION LOGIC:
-        let bestMatch = geoData.candidates.find(c => c.address.toUpperCase().includes("PRINCE GEORGE'S"));
-        if (!bestMatch) bestMatch = geoData.candidates[0];
+        // FIX 2: Default to the user's raw input if the geocoder fails us
+        let standardizedBase = addressStr.toUpperCase();
         
-        let addressParts = bestMatch.address.split(',');
-        let standardizedBase = addressParts[0].trim().toUpperCase();
-        
-        // FIX: If the Geocoder returns the 11-digit Tax ID first (e.g., "17113930070, 12600 ABERCORN PL")
-        // we need to skip the Tax ID and grab the actual address string in the second part.
-        if (/^\d{10,}$/.test(standardizedBase) && addressParts.length > 1) {
-            standardizedBase = addressParts[1].trim().toUpperCase();
+        if (geoData.candidates && geoData.candidates.length > 0) {
+            // PRIORITIZATION LOGIC: Look for PG County in the address string OR the County attribute
+            let bestMatch = geoData.candidates.find(c => {
+                const addrStr = c.address ? c.address.toUpperCase() : "";
+                const countyStr = c.attributes && c.attributes.County ? c.attributes.County.toUpperCase() : "";
+                return addrStr.includes("PRINCE GEORGE") || countyStr.includes("PRINCE GEORGE");
+            });
+
+            // Only use the geocoder string if we confirmed it belongs to PG County
+            if (bestMatch) {
+                let addressParts = bestMatch.address.split(',');
+                let parsedBase = addressParts[0].trim().toUpperCase();
+                
+                // Keep existing FIX: Skip 11-digit Tax ID if it appears first
+                if (/^\d{10,}$/.test(parsedBase) && addressParts.length > 1) {
+                    parsedBase = addressParts[1].trim().toUpperCase();
+                }
+                standardizedBase = parsedBase;
+            }
         }
-        
+
         const addrTokens = standardizedBase.split(' ');
         const fuzzySearch = `%${addrTokens[0]}%${addrTokens[1] || ''}%`;
 
@@ -185,7 +196,9 @@ async function fetchPropertyData(addressStr) {
                 sdat_url: attr.SDATWEBADR
             };
         }
-    } catch (e) { throw e; }
+    } catch (e) { 
+        console.error("Lookup Error: ", e); 
+    }
     return null;
 }
 
