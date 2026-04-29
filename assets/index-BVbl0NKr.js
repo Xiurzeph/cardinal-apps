@@ -63,7 +63,7 @@ This typically indicates that your device does not have a healthy Internet conne
                     </table>
                 </div>
             </div>
-        `}),e.innerHTML=r,t&&(et&&!et.isAnonymous?t.classList.remove("hidden"):t.classList.add("hidden"))}window.shareGroup=async function(n){const e=Ve[n],t=`Cardinal Property Group ${n+1}:
+        `}),e.innerHTML=r,t&&(et&&!et.isAnonymous?t.classList.remove("hidden"):t.classList.add("hidden"))}window.shareGroup=async function(n){const e=Ve[n],t=`Adresses ${n+1}:
 `+e.items.map(r=>`- ${r.full_address}, ${r.city}, MD ${r.zip}
   SDAT: ${r.sdat_url}`).join(`
 
