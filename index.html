@@ -8,8 +8,8 @@
     <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
     
     <!-- Changed to a relative path (removed leading slash) to fix 404 in subdirectories -->
-  <script type="module" crossorigin src="./assets/index-B7YB82Ht.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-CXLxraUL.css">
+  <script type="module" crossorigin src="./assets/index-DUKtBmeI.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-BBdGWk4d.css">
 </head>
 <body class="bg-gray-50 font-sans text-gray-900 h-screen flex flex-col relative">
 
@@ -129,5 +129,21 @@
         </div>
     </div>
 </div>
+</div>
+</div>
+
+<div id="confirm-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all text-center p-8">
+        <h3 id="confirm-modal-title" class="text-xl font-bold text-gray-800 mb-2">Confirm</h3>
+        <p id="confirm-modal-msg" class="text-sm text-gray-500 mb-8">Are you sure?</p>
+        <div class="grid grid-cols-2 gap-4">
+            <button onclick="window.closeConfirmModal()" class="w-full py-3 rounded-xl border-2 border-gray-100 text-gray-400 font-black text-xs uppercase hover:bg-gray-50 transition-all">Cancel</button>
+            <button onclick="window.executeConfirmedAction()" class="w-full py-3 rounded-xl bg-cardinal text-white font-black text-xs uppercase hover:shadow-lg hover:shadow-red-200 transition-all">Confirm</button>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>
 </body>
 </html>
