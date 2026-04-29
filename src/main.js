@@ -171,13 +171,21 @@ async function fetchPropertyData(addressStr) {
                 standardizedBase = parsedBase;
             }
         }
+    // This construction ensures that even if the geocoding step fails, we still attempt to query the property database with the original cleaned address, maximizing our chances of a successful match.
+        const addrTokens = standardizedBase.split(/\s+/);
+        const num = addrTokens[0];
+        const street = addrTokens[1] || '';
 
-        const addrTokens = standardizedBase.split(' ');
-        const fuzzySearch = `%${addrTokens[0]}%${addrTokens[1] || ''}%`;
+        // Strict Wildcard Logic: Prevents "ELM" from bleeding into "ELMHURST"
+        // Looks for "6305 %ELM %" (handles suffixes like ST, AVE) OR "6305 %ELM" (handles no suffix)
+        let exactWhere = `UPPER(ADDRESS) LIKE '${num}%' AND JURSCODE = 'PRIN'`;
+        if (street) {
+            exactWhere = `(UPPER(ADDRESS) LIKE '${num} %${street} %' OR UPPER(ADDRESS) LIKE '${num} %${street}') AND JURSCODE = 'PRIN'`;
+        }
 
         // Step 2: Query Property DB with strict PRIN priority
         const queryParams = new URLSearchParams({
-            where: `UPPER(ADDRESS) LIKE '${fuzzySearch}' AND JURSCODE = 'PRIN'`,
+            where: exactWhere,
             outFields: 'ADDRESS,OOI,SDATWEBADR,CITY,ZIPCODE',
             f: 'json',
             resultRecordCount: 1
