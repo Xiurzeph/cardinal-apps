@@ -284,7 +284,7 @@ function renderResults(groups) {
 
 window.shareGroup = async function(idx) {
     const group = groupedBatch[idx];
-    const textContent = `Adresses ${idx + 1}:\n` + 
+    const textContent = `Addresses ${idx + 1}:\n` + 
         group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  SDAT: ${i.sdat_url}`).join('\n\n');
 
     if (navigator.share) {
