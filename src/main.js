@@ -142,13 +142,13 @@ async function fetchPropertyData(addressStr) {
             SingleLine: biasedSearch, 
             f: 'json', 
             outSR: 102100,
-            outFields: 'County' // FIX 1: Explicitly request the County attribute
+            outFields: 'County' // Explicitly request the County attribute
         });
 
         const geoRes = await fetch(`${MD_LOCATOR_URL}?${geocodeParams}`);
         const geoData = await geoRes.json();
         
-        // FIX 2: Default to the user's raw input if the geocoder fails us
+        // Default to the user's raw input if the geocoder fails us
         let standardizedBase = addressStr.toUpperCase();
         
         if (geoData.candidates && geoData.candidates.length > 0) {
@@ -164,20 +164,19 @@ async function fetchPropertyData(addressStr) {
                 let addressParts = bestMatch.address.split(',');
                 let parsedBase = addressParts[0].trim().toUpperCase();
                 
-                // Keep existing FIX: Skip 11-digit Tax ID if it appears first
+                // Skip 11-digit Tax ID if it appears first
                 if (/^\d{10,}$/.test(parsedBase) && addressParts.length > 1) {
                     parsedBase = addressParts[1].trim().toUpperCase();
                 }
                 standardizedBase = parsedBase;
             }
         }
-    // This construction ensures that even if the geocoding step fails, we still attempt to query the property database with the original cleaned address, maximizing our chances of a successful match.
+        
         const addrTokens = standardizedBase.split(/\s+/);
         const num = addrTokens[0];
         const street = addrTokens[1] || '';
 
         // Strict Wildcard Logic: Prevents "ELM" from bleeding into "ELMHURST"
-        // Looks for "6305 %ELM %" (handles suffixes like ST, AVE) OR "6305 %ELM" (handles no suffix)
         let exactWhere = `UPPER(ADDRESS) LIKE '${num}%' AND JURSCODE = 'PRIN'`;
         if (street) {
             exactWhere = `(UPPER(ADDRESS) LIKE '${num} %${street} %' OR UPPER(ADDRESS) LIKE '${num} %${street}') AND JURSCODE = 'PRIN'`;
@@ -201,7 +200,8 @@ async function fetchPropertyData(addressStr) {
                 city: attr.CITY || 'CLINTON', 
                 zip: attr.ZIPCODE || '',
                 raw_ooi: attr.OOI, 
-                sdat_url: attr.SDATWEBADR
+                // Always construct the direct clickable URL pointing to the marylandgov.us portal
+                sdat_url: `https://www.marylandgov.us/property?address=${encodeURIComponent(attr.ADDRESS)}`
             };
         }
     } catch (e) { 
@@ -237,7 +237,7 @@ function renderResults(groups) {
                         <button onclick="shareGroup(${gIdx})" class="bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">
                             Share Group
                         </button>
-                        <button onclick="toggleGroupComplete(${gIdx})" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
+                        <button onclick="toggleGroupComplete(${gIdx})" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'isDone' ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
                             ${isDone ? 'Undo' : 'Complete'}
                         </button>
                     </div>
@@ -284,7 +284,7 @@ function renderResults(groups) {
 
 window.shareGroup = async function(idx) {
     const group = groupedBatch[idx];
-    const textContent = `Cardinal Property Group ${idx + 1}:\n` + 
+    const textContent = `Adresses ${idx + 1}:\n` + 
         group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  SDAT: ${i.sdat_url}`).join('\n\n');
 
     if (navigator.share) {
