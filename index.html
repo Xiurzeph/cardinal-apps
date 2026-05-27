@@ -8,8 +8,8 @@
     <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
     
     <!-- Changed to a relative path (removed leading slash) to fix 404 in subdirectories -->
-  <script type="module" crossorigin src="./assets/index-ClzMGoiO.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-BX-RHkSW.css">
+  <script type="module" crossorigin src="./assets/index-WlXN6o5u.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CspVqOB-.css">
 </head>
 <body class="bg-gray-50 font-sans text-gray-900 h-screen flex flex-col relative">
 
@@ -43,7 +43,7 @@
 
     <div id="app-content" class="hidden flex-1 flex flex-col">
         <header class="no-print bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center sticky top-0 z-40 shadow-sm">
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 cursor-pointer hover:opacity-85 active:scale-95 transition-all duration-150" onclick="window.location.reload()" title="Click to Refresh App">
                 <img src="https://cardinalcomputersystems.com/cardinal-logo.png" class="h-8 w-auto" alt="Cardinal Logo">
                 <h1 class="font-bold hidden sm:block tracking-tight text-gray-800">Cardinal Address Lookup</h1>
             </div>
@@ -158,10 +158,14 @@
                 <p class="text-white/80 text-xs mt-1 uppercase tracking-widest font-medium">Cardinal Sharing Service</p>
             </div>
             <div class="p-8">
-                <label class="block text-gray-500 text-[10px] uppercase font-black mb-2 tracking-widest">Message Preview</label>
-                <textarea id="share-preview-text" readonly class="w-full h-36 bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 text-xs font-mono mb-6 resize-none focus:outline-none focus:ring-0"></textarea>
+                <div class="flex justify-between items-center mb-2">
+                    <label class="block text-gray-500 text-[10px] uppercase font-black tracking-widest">Message Preview</label>
+                    <span class="text-[9px] text-gray-400 font-semibold italic">Tap text box to select all</span>
+                </div>
+                <!-- Added auto-focus and full-selection on tap for failsafe manual copy -->
+                <textarea id="share-preview-text" readonly onclick="this.focus(); this.select();" class="w-full h-36 bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 text-xs font-mono mb-6 resize-none focus:outline-none focus:ring-2 focus:ring-cardinal/25 cursor-pointer" title="Click to instantly select all text"></textarea>
                 
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
                     <!-- Text/SMS Button -->
                     <a id="share-sms-btn" href="#" class="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-gray-100 hover:border-cardinal hover:bg-red-50/20 transition-all text-center">
                         <svg class="w-6 h-6 text-cardinal mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -177,7 +181,7 @@
                         <span class="text-xs font-bold text-gray-700">Email</span>
                     </a>
                     <!-- Direct Copy Button -->
-                    <button onclick="window.copyShareText()" class="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-gray-100 hover:border-cardinal hover:bg-red-50/20 transition-all text-center">
+                    <button onclick="window.copyShareText()" class="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-gray-100 hover:border-cardinal hover:bg-red-50/20 transition-all text-center focus:outline-none">
                         <svg class="w-6 h-6 text-cardinal mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path>
                         </svg>
@@ -185,7 +189,11 @@
                     </button>
                 </div>
 
-                <button onclick="window.closeShareModal()" class="w-full py-3 rounded-xl border-2 border-gray-100 text-gray-400 font-black text-xs uppercase hover:bg-gray-50 transition-all">Close</button>
+                <div class="grid grid-cols-2 gap-4">
+                    <!-- Added Close & Complete shortcut button -->
+                    <button onclick="window.completeAndCloseShare()" class="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase hover:shadow-lg hover:shadow-emerald-100 transition-all">Complete & Close</button>
+                    <button onclick="window.closeShareModal()" class="w-full py-3.5 rounded-xl border-2 border-gray-100 text-gray-400 font-black text-xs uppercase hover:bg-gray-50 transition-all">Close</button>
+                </div>
             </div>
         </div>
     </div>
