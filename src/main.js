@@ -23,18 +23,23 @@ const app = initializeApp(myFirebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'cardinal-lookup';
+
+// --- State Management ---
 let currentUser = null;
 let currentBatchId = null; 
+let currentBatchSource = 'private'; // 'private' or 'public'
 let pendingAction = null; 
+let groupedBatch = []; 
+let currentTab = 'formatter';
+let currentDbSubTab = 'private'; // Sub-navigation inside history tab
+
+// --- Runtime In-Session Memory Caching ---
+const addressCache = new Map();
 
 // --- API Constants ---
 const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
 // Reverted back to the working MultiroleLocator since CompositeLocator is 404 on the new server
 const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_MultiroleLocator/GeocodeServer/findAddressCandidates";
-
-// --- State Management ---
-let groupedBatch = []; 
-let currentTab = 'formatter';
 
 // --- Auth State Listener ---
 onAuthStateChanged(auth, (user) => {
@@ -78,7 +83,7 @@ function chunkArray(array, size) {
 }
 
 /**
- * Main execution function
+ * Main execution function with high-performance geocoder in-session caching
  */
 async function runLookupAndFormat() {
     const input = document.getElementById('csvInput').value;
@@ -101,13 +106,26 @@ async function runLookupAndFormat() {
     startProgressModal(validAddresses.length);
     const results = [];
     currentBatchId = null; 
+    let cachedHits = 0;
     
     for (let i = 0; i < validAddresses.length; i++) {
         const item = validAddresses[i];
+        const cacheKey = item.cleaned.toUpperCase().trim();
         updateProgress(i + 1, validAddresses.length, item.cleaned);
         
         try {
-            const result = await fetchPropertyData(item.cleaned);
+            let result = null;
+            // Check session runtime cache first to safeguard API quotas
+            if (addressCache.has(cacheKey)) {
+                result = addressCache.get(cacheKey);
+                cachedHits++;
+            } else {
+                result = await fetchPropertyData(item.cleaned);
+                if (result) {
+                    addressCache.set(cacheKey, result);
+                }
+            }
+
             if (result) {
                 const isOwnerOcc = result.raw_ooi && result.raw_ooi.includes("H");
                 if (!ownerOccupiedOnly || (ownerOccupiedOnly && isOwnerOcc)) {
@@ -126,13 +144,18 @@ async function runLookupAndFormat() {
     groupedBatch = chunkArray(results, 5);
     renderResults(groupedBatch);
     hideProgressModal();
-    showToast(`Found ${results.length} properties in ${groupedBatch.length} groups.`);
+    
+    if (cachedHits > 0) {
+        showToast(`Found ${results.length} properties in ${groupedBatch.length} groups (${cachedHits} served from speed cache).`);
+    } else {
+        showToast(`Found ${results.length} properties in ${groupedBatch.length} groups.`);
+    }
 }
 
 /**
  * Queries Maryland iMAP
  * Improvements: Prioritizes PRIN candidates, applies strict JURSCODE filter,
- * and fixes the Tax ID masking issue.
+ * and fixes the Tax ID masking issue. Always generates marylandgov.us lookup link.
  */
 async function fetchPropertyData(addressStr) {
     try {
@@ -237,7 +260,7 @@ function renderResults(groups) {
                         <button onclick="shareGroup(${gIdx})" class="bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">
                             Share Group
                         </button>
-                        <button onclick="toggleGroupComplete(${gIdx})" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'isDone' ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
+                        <button onclick="toggleGroupComplete(${gIdx})" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
                             ${isDone ? 'Undo' : 'Complete'}
                         </button>
                     </div>
@@ -284,8 +307,9 @@ function renderResults(groups) {
 
 window.shareGroup = async function(idx) {
     const group = groupedBatch[idx];
+    // Fixed spelling of 'Addresses' and renamed 'SDAT:' to 'PropLookup:'
     const textContent = `Addresses ${idx + 1}:\n` + 
-        group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  SDAT: ${i.sdat_url}`).join('\n\n');
+        group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  PropLookup: ${i.sdat_url}`).join('\n\n');
 
     if (navigator.share) {
         try {
@@ -313,7 +337,7 @@ window.toggleGroupComplete = async function(idx) {
 
     if (currentBatchId) {
         try {
-            const batchRef = doc(getCollectionRef(), currentBatchId);
+            const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
             await updateDoc(batchRef, { data: groupedBatch });
             showToast("Status synced", "success");
         } catch (e) {
@@ -324,8 +348,18 @@ window.toggleGroupComplete = async function(idx) {
 
 // --- Firebase Operations ---
 
-function getCollectionRef() {
-    return collection(db, 'artifacts', appId, 'users', currentUser.uid, 'batches');
+/**
+ * Generates appropriate document paths based on Rule 1 (Strict Paths)
+ * @param {string} source - 'private' or 'public'
+ */
+function getCollectionRef(source = 'private') {
+    if (source === 'public') {
+        // Rule 1: Strict public data paths
+        return collection(db, 'artifacts', appId, 'public', 'data', 'batches');
+    } else {
+        // Rule 1: Strict user-specific private data paths
+        return collection(db, 'artifacts', appId, 'users', currentUser.uid, 'batches');
+    }
 }
 
 window.saveOrUpdateBatch = function() {
@@ -334,8 +368,11 @@ window.saveOrUpdateBatch = function() {
 
     const modal = document.getElementById('save-batch-modal');
     const input = document.getElementById('batch-name-input');
+    const chkPublic = document.getElementById('chkSavePublic');
+    
     if (modal && input) {
         input.value = `Batch ${new Date().toLocaleDateString()}`;
+        if (chkPublic) chkPublic.checked = false; // default to private
         modal.classList.remove('hidden');
     }
 };
@@ -344,16 +381,26 @@ window.confirmSave = async function() {
     const batchName = document.getElementById('batch-name-input').value.trim();
     if (!batchName) return showToast("Enter a name", "error");
 
+    const isPublic = document.getElementById('chkSavePublic').checked;
+    const targetSource = isPublic ? 'public' : 'private';
+
     try {
-        const docRef = await addDoc(getCollectionRef(), {
+        const payload = {
             name: batchName,
             data: groupedBatch,
-            timestamp: Date.now()
-        });
+            timestamp: Date.now(),
+            isPublic: isPublic,
+            createdBy: currentUser.displayName || currentUser.email || 'Team Member'
+        };
+
+        const docRef = await addDoc(getCollectionRef(targetSource), payload);
         currentBatchId = docRef.id; 
-        showToast("Batch saved!", "success");
+        currentBatchSource = targetSource;
+        
+        showToast(`Batch saved to ${isPublic ? 'Team Shared' : 'Private'} history!`, "success");
         window.closeSaveModal();
     } catch (error) {
+        console.error("Confirm Save Error: ", error);
         showToast("Save failed", "error");
     }
 };
@@ -364,56 +411,68 @@ async function loadHistory() {
     tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-400 italic">Loading history...</td></tr>';
 
     try {
-        const querySnapshot = await getDocs(getCollectionRef());
+        // Rule 2: Fetch only simple collections without orderBy filters, then sort in JS memory
+        const querySnapshot = await getDocs(getCollectionRef(currentDbSubTab));
         let batches = [];
         querySnapshot.forEach((doc) => batches.push({ id: doc.id, ...doc.data() }));
         batches.sort((a, b) => b.timestamp - a.timestamp);
 
         if (batches.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-500">No batches found.</td></tr>';
+            tableBody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-gray-500">No ${currentDbSubTab} batches found.</td></tr>`;
             return;
         }
 
         tableBody.innerHTML = "";
         batches.forEach(batch => {
             const tr = document.createElement("tr");
+            const creatorLine = currentDbSubTab === 'public' 
+                ? `<div class="text-[10px] text-gray-400 font-bold uppercase mt-1">Shared by: ${batch.createdBy || 'Unknown'}</div>` 
+                : '';
+                
             tr.innerHTML = `
                 <td class="px-6 py-4">
                     <div class="font-bold text-gray-800">${batch.name}</div>
-                    <div class="text-[10px] text-gray-400">${new Date(batch.timestamp).toLocaleString()} • ${batch.data.length} Groups</div>
+                    <div class="text-[10px] text-gray-400">${new Date(batch.timestamp).toLocaleString()}</div>
+                </td>
+                <td class="px-6 py-4">
+                    <div class="text-xs text-gray-600">${batch.data.length} Groups</div>
+                    ${creatorLine}
                 </td>
                 <td class="px-6 py-4 text-right">
                     <div class="flex justify-end gap-3 items-center">
-                        <button onclick="window.viewBatch('${batch.id}')" class="text-cardinal font-black hover:underline text-[10px] uppercase">View</button>
-                        <button onclick="window.requestDeleteBatch('${batch.id}')" class="text-gray-300 hover:text-red-600 transition-colors">
+                        <button onclick="window.viewBatch('${batch.id}', '${currentDbSubTab}')" class="text-cardinal font-black hover:underline text-[10px] uppercase">View</button>
+                        <button onclick="window.requestDeleteBatch('${batch.id}', '${currentDbSubTab}')" class="text-gray-300 hover:text-red-600 transition-colors">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                         </button>
                     </div>
                 </td>
             `;
-            window[`batchData_${batch.id}`] = { data: batch.data, id: batch.id };
+            window[`batchData_${batch.id}`] = { data: batch.data, id: batch.id, source: currentDbSubTab };
             tableBody.appendChild(tr);
         });
     } catch (error) {
+        console.error("Load History Error: ", error);
         tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-red-500">Error loading history</td></tr>';
     }
 }
 
-window.viewBatch = function(batchId) {
+window.viewBatch = function(batchId, source = 'private') {
     const entry = window[`batchData_${batchId}`];
     if (entry) {
         groupedBatch = entry.data;
         currentBatchId = entry.id;
+        currentBatchSource = source || entry.source || 'private';
         renderResults(groupedBatch);
         window.switchTab('formatter');
-        showToast("Batch loaded");
+        showToast(`Loaded ${currentBatchSource === 'public' ? 'Team Shared' : 'Private'} batch`);
     }
 };
 
-window.requestDeleteBatch = function(id) {
+window.requestDeleteBatch = function(id, source = 'private') {
+    const targetSource = source || 'private';
     openConfirmModal("Delete this batch?", "This action cannot be undone.", async () => {
         try {
-            await deleteDoc(doc(getCollectionRef(), id));
+            await deleteDoc(doc(getCollectionRef(targetSource), id));
             showToast("Batch deleted");
             loadHistory();
         } catch (e) { showToast("Delete failed", "error"); }
@@ -421,9 +480,9 @@ window.requestDeleteBatch = function(id) {
 };
 
 window.requestClearAllHistory = function() {
-    openConfirmModal("Clear All History?", "This will permanently delete everything.", async () => {
+    openConfirmModal("Clear All History?", "This will permanently delete everything in your current tab view.", async () => {
         try {
-            const querySnapshot = await getDocs(getCollectionRef());
+            const querySnapshot = await getDocs(getCollectionRef(currentDbSubTab));
             const deletes = [];
             querySnapshot.forEach(d => deletes.push(deleteDoc(d.ref)));
             await Promise.all(deletes);
@@ -495,6 +554,21 @@ window.switchTab = function(tab) {
         fmtBtn.classList.remove("tab-active");
         loadHistory();
     }
+};
+
+window.switchDbSubTab = function(subtab) {
+    currentDbSubTab = subtab;
+    const privateBtn = document.getElementById("btn-subtab-private");
+    const publicBtn = document.getElementById("btn-subtab-public");
+    
+    if (subtab === 'private') {
+        privateBtn.className = "font-bold text-sm pb-2 border-b-2 border-cardinal text-cardinal transition-all";
+        publicBtn.className = "font-bold text-sm pb-2 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-all";
+    } else {
+        publicBtn.className = "font-bold text-sm pb-2 border-b-2 border-cardinal text-cardinal transition-all";
+        privateBtn.className = "font-bold text-sm pb-2 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-all";
+    }
+    loadHistory();
 };
 
 function startProgressModal(total) {
