@@ -33,6 +33,7 @@ let groupedBatch = [];
 let currentTab = 'formatter';
 let currentDbSubTab = 'private'; // Sub-navigation inside history tab
 let activeShareText = ''; // Temporarily stores text generated for active sharing instance
+let activeShareGroupIndex = null; // Tracks index of the active group being shared
 
 // --- Runtime In-Session Memory Caching ---
 const addressCache = new Map();
@@ -311,6 +312,7 @@ function renderResults(groups) {
  */
 window.shareGroup = function(idx) {
     const group = groupedBatch[idx];
+    activeShareGroupIndex = idx; // Save shared index context
     
     // Explicit format matching: correct "Addresses" spelling and "PropLookup:" service prefix
     activeShareText = `Addresses ${idx + 1}:\n` + 
@@ -325,12 +327,20 @@ window.shareGroup = function(idx) {
         previewTextarea.value = activeShareText;
     }
 
-    // Platform-specific SMS Scheme Builder (bulletproof body serialization)
+    // Platform-specific SMS Scheme Builder (bulletproof parameters for iOS/Android)
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-    const smsSeparator = isIOS ? '&' : '?';
+    let smsUrl = '';
+    
+    if (isIOS) {
+        // iOS requires semicolon parameter separation for prefilled body text
+        smsUrl = `sms:;body=${encodeURIComponent(activeShareText)}`;
+    } else {
+        // Android requires standard question mark parameter separation
+        smsUrl = `sms:?body=${encodeURIComponent(activeShareText)}`;
+    }
     
     if (smsBtn) {
-        smsBtn.href = `sms:${smsSeparator}body=${encodeURIComponent(activeShareText)}`;
+        smsBtn.href = smsUrl;
     }
 
     if (emailBtn) {
@@ -342,27 +352,80 @@ window.shareGroup = function(idx) {
     }
 };
 
+/**
+ * High-reliability copy execution built to bypass iframe and security restrictions
+ */
 window.copyShareText = function() {
-    if (!activeShareText) return;
+    const previewTextarea = document.getElementById('share-preview-text');
     
-    const dummy = document.createElement("textarea");
-    document.body.appendChild(dummy);
-    dummy.value = activeShareText;
-    dummy.select();
-    
-    try {
-        document.execCommand("copy");
-        showToast("Group copied to clipboard!");
-    } catch (e) {
-        showToast("Copy failed", "error");
-    } finally {
-        document.body.removeChild(dummy);
+    if (!previewTextarea) {
+        showToast("No element found to copy", "error");
+        return;
     }
+
+    // Explicitly focus and select contents of the preview textarea
+    previewTextarea.focus();
+    previewTextarea.select();
+    previewTextarea.setSelectionRange(0, 99999); // Mobile compatibility select
+
+    const textToCopy = previewTextarea.value || activeShareText;
+
+    if (!textToCopy) {
+        showToast("No text to copy", "error");
+        return;
+    }
+
+    // Attempt modern clipboard writing first inside the secure window context
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(textToCopy)
+            .then(() => {
+                showToast("Group copied to clipboard!");
+            })
+            .catch(() => {
+                fallbackCopyText(previewTextarea);
+            });
+    } else {
+        fallbackCopyText(previewTextarea);
+    }
+};
+
+/**
+ * Invisible DOM Copy Fallback designed to guarantee focus in sandboxed spaces
+ */
+function fallbackCopyText(textareaElement) {
+    try {
+        textareaElement.focus();
+        textareaElement.select();
+        textareaElement.setSelectionRange(0, 99999);
+        
+        const successful = document.execCommand('copy');
+        if (successful) {
+            showToast("Group copied to clipboard!");
+        } else {
+            showToast("Clipboard restricted. Please tap message to copy manually.", "error");
+        }
+    } catch (err) {
+        showToast("Clipboard restricted. Please tap message to copy manually.", "error");
+    }
+}
+
+/**
+ * Complete group state and close share modal helper
+ */
+window.completeAndCloseShare = async function() {
+    if (activeShareGroupIndex !== null && activeShareGroupIndex !== undefined) {
+        // Set state to true only if not already completed
+        if (groupedBatch[activeShareGroupIndex] && !groupedBatch[activeShareGroupIndex].completed) {
+            await window.toggleGroupComplete(activeShareGroupIndex);
+        }
+    }
+    window.closeShareModal();
 };
 
 window.closeShareModal = function() {
     const modal = document.getElementById('share-modal');
     if (modal) modal.classList.add('hidden');
+    activeShareGroupIndex = null;
 };
 
 window.toggleGroupComplete = async function(idx) {
