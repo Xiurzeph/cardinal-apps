@@ -32,6 +32,7 @@ let pendingAction = null;
 let groupedBatch = []; 
 let currentTab = 'formatter';
 let currentDbSubTab = 'private'; // Sub-navigation inside history tab
+let activeShareText = ''; // Temporarily stores text generated for active sharing instance
 
 // --- Runtime In-Session Memory Caching ---
 const addressCache = new Map();
@@ -305,30 +306,63 @@ function renderResults(groups) {
     }
 }
 
-window.shareGroup = async function(idx) {
+/**
+ * Share Group triggers the brand new integrated Share Service Panel
+ */
+window.shareGroup = function(idx) {
     const group = groupedBatch[idx];
-    // Fixed spelling of 'Addresses' and renamed 'SDAT:' to 'PropLookup:'
-    const textContent = `Addresses ${idx + 1}:\n` + 
+    
+    // Explicit format matching: correct "Addresses" spelling and "PropLookup:" service prefix
+    activeShareText = `Addresses ${idx + 1}:\n` + 
         group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  PropLookup: ${i.sdat_url}`).join('\n\n');
 
-    if (navigator.share) {
-        try {
-            await navigator.share({
-                title: `Property Group ${idx + 1}`,
-                text: textContent
-            });
-        } catch (e) {
-            console.error("Share failed", e);
-        }
-    } else {
-        const dummy = document.createElement("textarea");
-        document.body.appendChild(dummy);
-        dummy.value = textContent;
-        dummy.select();
-        document.execCommand("copy");
-        document.body.removeChild(dummy);
-        showToast("Group copied to clipboard!");
+    const modal = document.getElementById('share-modal');
+    const previewTextarea = document.getElementById('share-preview-text');
+    const smsBtn = document.getElementById('share-sms-btn');
+    const emailBtn = document.getElementById('share-email-btn');
+
+    if (previewTextarea) {
+        previewTextarea.value = activeShareText;
     }
+
+    // Platform-specific SMS Scheme Builder (bulletproof body serialization)
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    const smsSeparator = isIOS ? '&' : '?';
+    
+    if (smsBtn) {
+        smsBtn.href = `sms:${smsSeparator}body=${encodeURIComponent(activeShareText)}`;
+    }
+
+    if (emailBtn) {
+        emailBtn.href = `mailto:?subject=${encodeURIComponent(`Property Group ${idx + 1} Details`)}&body=${encodeURIComponent(activeShareText)}`;
+    }
+
+    if (modal) {
+        modal.classList.remove('hidden');
+    }
+};
+
+window.copyShareText = function() {
+    if (!activeShareText) return;
+    
+    const dummy = document.createElement("textarea");
+    document.body.appendChild(dummy);
+    dummy.value = activeShareText;
+    dummy.select();
+    
+    try {
+        document.execCommand("copy");
+        showToast("Group copied to clipboard!");
+    } catch (e) {
+        showToast("Copy failed", "error");
+    } finally {
+        document.body.removeChild(dummy);
+    }
+};
+
+window.closeShareModal = function() {
+    const modal = document.getElementById('share-modal');
+    if (modal) modal.classList.add('hidden');
 };
 
 window.toggleGroupComplete = async function(idx) {
