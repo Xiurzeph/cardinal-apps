@@ -284,7 +284,7 @@ function renderResults(groups) {
                                     </td>
                                     <td class="p-4 text-right">
                                         <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}">
-                                            SDAT LINK
+                                            ProLookup LINK
                                         </a>
                                     </td>
                                 </tr>
