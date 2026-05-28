@@ -54,7 +54,7 @@ This typically indicates that your device does not have a healthy Internet conne
                                     </td>
                                     <td class="p-4 text-right">
                                         <a href="${u.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${a?"pointer-events-none text-gray-300":""}">
-                                            SDAT LINK
+                                            ProLookup LINK
                                         </a>
                                     </td>
                                 </tr>
