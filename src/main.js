@@ -38,6 +38,64 @@ let activeShareGroupIndex = null; // Tracks index of the active group being shar
 // --- Runtime In-Session Memory Caching ---
 const addressCache = new Map();
 
+// --- Address Status Management ---
+const addressStatuses = new Map(); // Maps address key to status
+
+const ADDRESS_STATUSES = [
+    'home',
+    'letter',
+    'not home 1',
+    'not home 2',
+    'not home 3',
+    'no soliciting',
+    'not trespassing',
+    'do not call'
+];
+
+function getAddressKey(address, city, zip) {
+    return `${address}|${city}|${zip}`;
+}
+
+function getStatusStyle(status) {
+    switch (status) {
+        case 'home':
+            return { textColor: 'text-gray-900', bgColor: 'bg-white', strikethrough: false, indicator: '' };
+        case 'letter':
+            return { textColor: 'text-orange-600', bgColor: 'bg-orange-50', strikethrough: false, indicator: '✉️ Letter' };
+        case 'not home 1':
+            return { textColor: 'text-gray-900', bgColor: 'bg-yellow-50', strikethrough: false, indicator: '🚪 Not Home 1' };
+        case 'not home 2':
+            return { textColor: 'text-gray-900', bgColor: 'bg-yellow-100', strikethrough: false, indicator: '🚪 Not Home 2' };
+        case 'not home 3':
+            return { textColor: 'text-gray-900', bgColor: 'bg-white', strikethrough: false, indicator: '🚪 Not Home 3' };
+        case 'no soliciting':
+            return { textColor: 'text-orange-600', bgColor: 'bg-orange-50', strikethrough: false, indicator: '⛔ No Soliciting' };
+        case 'not trespassing':
+            return { textColor: 'text-white', bgColor: 'bg-red-500', strikethrough: true, indicator: '⚠️ No Trespassing' };
+        case 'do not call':
+            return { textColor: 'text-white', bgColor: 'bg-red-500', strikethrough: true, indicator: '📞 Do Not Call' };
+        default:
+            return { textColor: 'text-gray-900', bgColor: 'bg-white', strikethrough: false, indicator: '' };
+    }
+}
+
+window.cycleAddressStatus = function(full_address, city, zip, event) {
+    event.stopPropagation();
+    const key = getAddressKey(full_address, city, zip);
+    const currentStatus = addressStatuses.get(key) || 'home';
+    const currentIndex = ADDRESS_STATUSES.indexOf(currentStatus);
+    const nextIndex = (currentIndex + 1) % ADDRESS_STATUSES.length;
+    const newStatus = ADDRESS_STATUSES[nextIndex];
+    
+    addressStatuses.set(key, newStatus);
+    
+    // Re-render the results to show updated status
+    renderResults(groupedBatch);
+    
+    // Show toast notification
+    showToast(`${full_address} → ${newStatus}`);
+};
+
 // --- API Constants ---
 const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
 // Reverted back to the working MultiroleLocator since CompositeLocator is 404 on the new server
@@ -107,7 +165,8 @@ async function runLookupAndFormat() {
 
     startProgressModal(validAddresses.length);
     const results = [];
-    currentBatchId = null; 
+    currentBatchId = null;
+    addressStatuses.clear(); // Clear previous status mappings for new lookup
     let cachedHits = 0;
     
     for (let i = 0; i < validAddresses.length; i++) {
@@ -271,24 +330,32 @@ function renderResults(groups) {
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
                         <tbody class="divide-y divide-gray-100">
-                            ${group.items.map(item => `
-                                <tr class="${isDone ? 'line-through text-gray-400' : ''}">
-                                    <td class="p-4">
-                                        <div class="text-sm font-bold">${item.full_address}</div>
-                                        <div class="text-[10px] uppercase text-gray-400">${item.city}, MD ${item.zip}</div>
-                                    </td>
-                                    <td class="p-4">
-                                        <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}">
-                                            ${item.occupancy}
-                                        </span>
-                                    </td>
-                                    <td class="p-4 text-right">
-                                        <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}">
-                                            ProLookup LINK
-                                        </a>
-                                    </td>
-                                </tr>
-                            `).join('')}
+                            ${group.items.map(item => {
+                                const key = getAddressKey(item.full_address, item.city, item.zip);
+                                const status = addressStatuses.get(key) || 'home';
+                                const styleInfo = getStatusStyle(status);
+                                return `
+                                    <tr class="${isDone ? 'line-through text-gray-400' : ''} cursor-pointer hover:opacity-80 transition-opacity" onclick="window.cycleAddressStatus('${item.full_address.replace(/'/g, "\\'")}'${', ' + "'" + item.city + "'" + ', ' + "'" + item.zip + "'"}, event)" title="Click to cycle status">
+                                        <td class="p-4">
+                                            <div class="p-3 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all">
+                                                <div class="text-sm font-bold">${item.full_address}</div>
+                                                <div class="text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1">${item.city}, MD ${item.zip}</div>
+                                                ${status !== 'home' ? `<div class="text-[9px] font-bold uppercase mt-2 opacity-75">${styleInfo.indicator}</div>` : ''}
+                                            </div>
+                                        </td>
+                                        <td class="p-4">
+                                            <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}">
+                                                ${item.occupancy}
+                                            </span>
+                                        </td>
+                                        <td class="p-4 text-right">
+                                            <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}" onclick="event.stopPropagation()">
+                                                ProLookup LINK
+                                            </a>
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('')}
                         </tbody>
                     </table>
                 </div>
@@ -435,7 +502,11 @@ window.toggleGroupComplete = async function(idx) {
     if (currentBatchId) {
         try {
             const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
-            await updateDoc(batchRef, { data: groupedBatch });
+            const batchData = {
+                data: groupedBatch,
+                addressStatuses: Object.fromEntries(addressStatuses)
+            };
+            await updateDoc(batchRef, batchData);
             showToast("Status synced", "success");
         } catch (e) {
             showToast("Failed to sync", "error");
@@ -485,6 +556,7 @@ window.confirmSave = async function() {
         const payload = {
             name: batchName,
             data: groupedBatch,
+            addressStatuses: Object.fromEntries(addressStatuses),
             timestamp: Date.now(),
             isPublic: isPublic,
             createdBy: currentUser.displayName || currentUser.email || 'Team Member'
@@ -544,7 +616,7 @@ async function loadHistory() {
                     </div>
                 </td>
             `;
-            window[`batchData_${batch.id}`] = { data: batch.data, id: batch.id, source: currentDbSubTab };
+            window[`batchData_${batch.id}`] = { data: batch.data, addressStatuses: batch.addressStatuses || {}, id: batch.id, source: currentDbSubTab };
             tableBody.appendChild(tr);
         });
     } catch (error) {
@@ -559,6 +631,15 @@ window.viewBatch = function(batchId, source = 'private') {
         groupedBatch = entry.data;
         currentBatchId = entry.id;
         currentBatchSource = source || entry.source || 'private';
+        
+        // Restore address statuses if they exist in the batch
+        addressStatuses.clear();
+        if (entry.addressStatuses) {
+            for (const [key, status] of Object.entries(entry.addressStatuses)) {
+                addressStatuses.set(key, status);
+            }
+        }
+        
         renderResults(groupedBatch);
         window.switchTab('formatter');
         showToast(`Loaded ${currentBatchSource === 'public' ? 'Team Shared' : 'Private'} batch`);
