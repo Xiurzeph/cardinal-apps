@@ -14,8 +14,11 @@ dist/
 Thumbs.db
 
 
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
 # Editor directories
 .vscode/
 .idea/
-.env
-.env.local
