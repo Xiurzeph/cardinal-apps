@@ -5,7 +5,7 @@
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, addDoc, getDocs, updateDoc, doc, deleteDoc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, getDocs, updateDoc, doc, deleteDoc, serverTimestamp } from "firebase/firestore";
 
 import './style.css'; 
 
@@ -44,6 +44,9 @@ let addressStatusSaveHandle = null;
 let addressStatusSaveTimeout = null;
 const ADDRESS_STATUS_SAVE_IDLE_MS = 2000;
 const ADDRESS_STATUS_SAVE_FALLBACK_MS = 1000;
+// Track last-synced statuses to send only deltas
+const lastSyncedStatuses = new Map();
+let addressStatusSyncInProgress = false;
 
 const ADDRESS_STATUSES = [
     'home',
@@ -107,16 +110,46 @@ function scheduleAddressStatusSync() {
         addressStatusSaveHandle = null;
         addressStatusSaveTimeout = null;
 
+        if (addressStatusSyncInProgress) return;
+        addressStatusSyncInProgress = true;
+
         try {
+            // Compute delta between current statuses and lastSyncedStatuses
+            const delta = {};
+            for (const [key, val] of addressStatuses.entries()) {
+                const last = lastSyncedStatuses.get(key);
+                if (last !== val) {
+                    // Use dot path to update only this map entry on the document
+                    const fieldPath = `addressStatuses.${key}`;
+                    delta[fieldPath] = val;
+                }
+            }
+
+            if (Object.keys(delta).length === 0) {
+                addressStatusSyncInProgress = false;
+                return;
+            }
+
+            // add a timestamp for visibility
+            delta['meta.lastStatusSync'] = serverTimestamp();
+
             const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
-            await updateDoc(batchRef, {
-                data: groupedBatch,
-                addressStatuses: Object.fromEntries(addressStatuses)
-            });
+            await updateDoc(batchRef, delta);
+
+            // update lastSyncedStatuses
+            for (const k of Object.keys(delta)) {
+                if (k.startsWith('addressStatuses.')) {
+                    const keyName = k.replace('addressStatuses.', '');
+                    lastSyncedStatuses.set(keyName, delta[k]);
+                }
+            }
+
             showToast('Batch status synced', 'success');
         } catch (err) {
             console.error('Address status sync failed', err);
             showToast('Status sync failed', 'error');
+        } finally {
+            addressStatusSyncInProgress = false;
         }
     };
 
@@ -553,11 +586,17 @@ window.toggleGroupComplete = async function(idx) {
     if (currentBatchId) {
         try {
             const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
-            const batchData = {
-                data: groupedBatch,
-                addressStatuses: Object.fromEntries(addressStatuses)
+            // Only update addressStatuses (avoid resending full batch.data)
+            const payload = {
+                addressStatuses: Object.fromEntries(addressStatuses),
+                'meta.lastStatusSync': serverTimestamp()
             };
-            await updateDoc(batchRef, batchData);
+            await updateDoc(batchRef, payload);
+            // after successful update, mark lastSyncedStatuses accordingly
+            lastSyncedStatuses.clear();
+            for (const [k, v] of Object.entries(payload.addressStatuses || {})) {
+                lastSyncedStatuses.set(k, v);
+            }
             showToast("Status synced", "success");
         } catch (e) {
             showToast("Failed to sync", "error");
@@ -617,6 +656,12 @@ window.confirmSave = async function() {
         currentBatchId = docRef.id; 
         currentBatchSource = targetSource;
         
+        // initialize lastSyncedStatuses to match what was saved
+        lastSyncedStatuses.clear();
+        for (const [k, v] of Object.entries(payload.addressStatuses || {})) {
+            lastSyncedStatuses.set(k, v);
+        }
+
         showToast(`Batch saved to ${isPublic ? 'Team Shared' : 'Private'} history!`, "success");
         window.closeSaveModal();
     } catch (error) {
@@ -688,6 +733,13 @@ window.viewBatch = function(batchId, source = 'private') {
         if (entry.addressStatuses) {
             for (const [key, status] of Object.entries(entry.addressStatuses)) {
                 addressStatuses.set(key, status);
+            }
+        }
+        // Initialize lastSyncedStatuses to avoid immediate delta-sync
+        lastSyncedStatuses.clear();
+        if (entry.addressStatuses) {
+            for (const [key, status] of Object.entries(entry.addressStatuses)) {
+                lastSyncedStatuses.set(key, status);
             }
         }
         
