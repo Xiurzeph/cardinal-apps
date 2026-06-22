@@ -40,6 +40,10 @@ const addressCache = new Map();
 
 // --- Address Status Management ---
 const addressStatuses = new Map(); // Maps address key to status
+let addressStatusSaveHandle = null;
+let addressStatusSaveTimeout = null;
+const ADDRESS_STATUS_SAVE_IDLE_MS = 2000;
+const ADDRESS_STATUS_SAVE_FALLBACK_MS = 1000;
 
 const ADDRESS_STATUSES = [
     'home',
@@ -77,11 +81,49 @@ function getStatusStyle(status) {
         case 'no soliciting':
             return { textColor: 'text-orange-600', bgColor: 'bg-orange-50', strikethrough: false, indicator: '⛔ No Soliciting' };
         case 'not trespassing':
-            return { textColor: 'text-white', bgColor: 'bg-red-500', strikethrough: true, indicator: '⚠️ No Trespassing' };
+            return { textColor: 'text-white', bgColor: 'bg-red-500', strikethrough: true, indicator: '⚠️ Not Trespassing' };
         case 'do not call':
             return { textColor: 'text-white', bgColor: 'bg-red-500', strikethrough: true, indicator: '📞 Do Not Call' };
         default:
             return { textColor: 'text-gray-900', bgColor: 'bg-white', strikethrough: false, indicator: '' };
+    }
+}
+
+function scheduleAddressStatusSync() {
+    if (!currentBatchId) return;
+
+    if (addressStatusSaveHandle) {
+        if ('cancelIdleCallback' in window) {
+            cancelIdleCallback(addressStatusSaveHandle);
+        }
+        addressStatusSaveHandle = null;
+    }
+    if (addressStatusSaveTimeout) {
+        clearTimeout(addressStatusSaveTimeout);
+        addressStatusSaveTimeout = null;
+    }
+
+    const saveFn = async () => {
+        addressStatusSaveHandle = null;
+        addressStatusSaveTimeout = null;
+
+        try {
+            const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
+            await updateDoc(batchRef, {
+                data: groupedBatch,
+                addressStatuses: Object.fromEntries(addressStatuses)
+            });
+            showToast('Batch status synced', 'success');
+        } catch (err) {
+            console.error('Address status sync failed', err);
+            showToast('Status sync failed', 'error');
+        }
+    };
+
+    if ('requestIdleCallback' in window) {
+        addressStatusSaveHandle = requestIdleCallback(saveFn, { timeout: ADDRESS_STATUS_SAVE_IDLE_MS });
+    } else {
+        addressStatusSaveTimeout = setTimeout(saveFn, ADDRESS_STATUS_SAVE_FALLBACK_MS);
     }
 }
 
@@ -97,6 +139,9 @@ window.cycleAddressStatus = function(full_address, city, zip, event) {
     
     // Re-render the results to show updated status
     renderResults(groupedBatch);
+    
+    // Schedule an async sync call to update the saved batch without overwhelming Firestore
+    scheduleAddressStatusSync();
     
     // Show toast notification
     showToast(`${full_address} → ${newStatus}`);
