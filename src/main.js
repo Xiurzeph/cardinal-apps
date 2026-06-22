@@ -44,6 +44,8 @@ const addressStatuses = new Map(); // Maps address key to status
 const ADDRESS_STATUSES = [
     'home',
     'letter',
+    'busy',
+    'visited',
     'not home 1',
     'not home 2',
     'not home 3',
@@ -62,6 +64,10 @@ function getStatusStyle(status) {
             return { textColor: 'text-gray-900', bgColor: 'bg-white', strikethrough: false, indicator: '' };
         case 'letter':
             return { textColor: 'text-orange-600', bgColor: 'bg-orange-50', strikethrough: false, indicator: '✉️ Letter' };
+        case 'busy':
+            return { textColor: 'text-sky-700', bgColor: 'bg-sky-50', strikethrough: false, indicator: '⏳ Busy' };
+        case 'visited':
+            return { textColor: 'text-teal-700', bgColor: 'bg-teal-50', strikethrough: true, indicator: '👣 Visited' };
         case 'not home 1':
             return { textColor: 'text-gray-900', bgColor: 'bg-yellow-50', strikethrough: false, indicator: '🚪 Not Home 1' };
         case 'not home 2':
