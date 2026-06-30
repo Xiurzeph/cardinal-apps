@@ -586,19 +586,11 @@ window.toggleGroupComplete = async function(idx) {
     if (currentBatchId) {
         try {
             const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
-            // Only update addressStatuses (avoid resending full batch.data)
-            const payload = {
-                addressStatuses: Object.fromEntries(addressStatuses),
-                'meta.lastStatusSync': serverTimestamp()
-            };
-            await updateDoc(batchRef, payload);
-            // after successful update, mark lastSyncedStatuses accordingly
-            lastSyncedStatuses.clear();
-            for (const [k, v] of Object.entries(payload.addressStatuses || {})) {
-                lastSyncedStatuses.set(k, v);
-            }
-            showToast("Status synced", "success");
+            const fieldPath = `data.${idx}.completed`;
+            await updateDoc(batchRef, { [fieldPath]: groupedBatch[idx].completed });
+            showToast("Group completion synced", "success");
         } catch (e) {
+            console.error("Toggle Complete Error:", e);
             showToast("Failed to sync", "error");
         }
     }
