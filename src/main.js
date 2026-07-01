@@ -65,6 +65,15 @@ function getAddressKey(address, city, zip) {
     return `${address}|${city}|${zip}`;
 }
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function getStatusStyle(status) {
     switch (status) {
         case 'home':
@@ -388,19 +397,52 @@ function renderResults(groups) {
         return;
     }
 
-    let html = '';
-
-    groups.forEach((group, gIdx) => {
+    const html = groups.map((group, gIdx) => {
         const isDone = group.completed;
 
-        html += `
+        const itemsHtml = group.items.map(item => {
+            const key = getAddressKey(item.full_address, item.city, item.zip);
+            const status = addressStatuses.get(key) || 'home';
+            const styleInfo = getStatusStyle(status);
+
+            const statusIndicator = status !== 'home' 
+                ? `<div class="text-[9px] font-bold uppercase mt-2 opacity-75">${styleInfo.indicator}</div>` 
+                : '';
+            const safeAddress = escapeHtml(item.full_address);
+            const safeCityText = escapeHtml(item.city);
+            const safeZipText = escapeHtml(item.zip);
+            const addressKey = escapeHtml(getAddressKey(item.full_address, item.city, item.zip));
+
+            return `
+                <tr class="${isDone ? 'line-through text-gray-400' : ''} cursor-pointer hover:opacity-80 transition-opacity" data-address-key="${addressKey}" title="Click to cycle status">
+                    <td class="p-4">
+                        <div class="p-3 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all">
+                            <div class="text-sm font-bold">${safeAddress}</div>
+                            <div class="text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1">${safeCityText}, MD ${safeZipText}</div>
+                            ${statusIndicator}
+                        </div>
+                    </td>
+                    <td class="p-4">
+                        <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}">
+                            ${item.occupancy}
+                        </span>
+                    </td>
+                    <td class="p-4 text-right">
+                        <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}">
+                            ProLookup LINK
+                        </a>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        return `
             <div class="mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}">
                 <div class="bg-gray-50 px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4">
                     <div class="flex items-center gap-3">
                         <span class="bg-cardinal text-white text-[10px] font-black px-2 py-1 rounded uppercase tracking-tighter">Group ${gIdx + 1}</span>
                         <h3 class="text-sm font-bold text-gray-800 ${isDone ? 'line-through' : ''}">${group.items.length} Properties</h3>
                     </div>
-                    
                     <div class="flex items-center gap-2">
                         <button onclick="shareGroup(${gIdx})" class="bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">
                             Share Group
@@ -410,44 +452,31 @@ function renderResults(groups) {
                         </button>
                     </div>
                 </div>
-
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
-                        <tbody class="divide-y divide-gray-100">
-                            ${group.items.map(item => {
-                                const key = getAddressKey(item.full_address, item.city, item.zip);
-                                const status = addressStatuses.get(key) || 'home';
-                                const styleInfo = getStatusStyle(status);
-                                return `
-                                    <tr class="${isDone ? 'line-through text-gray-400' : ''} cursor-pointer hover:opacity-80 transition-opacity" onclick="window.cycleAddressStatus('${item.full_address.replace(/'/g, "\\'")}'${', ' + "'" + item.city + "'" + ', ' + "'" + item.zip + "'"}, event)" title="Click to cycle status">
-                                        <td class="p-4">
-                                            <div class="p-3 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all">
-                                                <div class="text-sm font-bold">${item.full_address}</div>
-                                                <div class="text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1">${item.city}, MD ${item.zip}</div>
-                                                ${status !== 'home' ? `<div class="text-[9px] font-bold uppercase mt-2 opacity-75">${styleInfo.indicator}</div>` : ''}
-                                            </div>
-                                        </td>
-                                        <td class="p-4">
-                                            <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}">
-                                                ${item.occupancy}
-                                            </span>
-                                        </td>
-                                        <td class="p-4 text-right">
-                                            <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}" onclick="event.stopPropagation()">
-                                                ProLookup LINK
-                                            </a>
-                                        </td>
-                                    </tr>
-                                `;
-                            }).join('')}
-                        </tbody>
+                        <tbody class="divide-y divide-gray-100">${itemsHtml}</tbody>
                     </table>
                 </div>
             </div>
         `;
-    });
+    }).join('');
 
     canvas.innerHTML = html;
+
+    canvas.querySelectorAll('tr[data-address-key]').forEach((row) => {
+        row.addEventListener('click', (event) => {
+            const addressKey = row.getAttribute('data-address-key');
+            if (!addressKey) return;
+            const [full_address, city, zip] = addressKey.split('|');
+            window.cycleAddressStatus(full_address, city, zip, event);
+        });
+
+        row.querySelectorAll('a').forEach((link) => {
+            link.addEventListener('click', (event) => {
+                event.stopPropagation();
+            });
+        });
+    });
     
     if (saveContainer) {
         if (currentUser && !currentUser.isAnonymous) {
@@ -466,8 +495,10 @@ window.shareGroup = function(idx) {
     activeShareGroupIndex = idx; // Save shared index context
     
     // Explicit format matching: correct "Addresses" spelling and "PropLookup:" service prefix
-    activeShareText = `Addresses ${idx + 1}:\n` + 
-        group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  PropLookup: ${i.sdat_url}`).join('\n\n');
+    activeShareText = [
+        `Addresses ${idx + 1}:`,
+        ...group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  PropLookup: ${i.sdat_url}`)
+    ].join('\n\n');
 
     const modal = document.getElementById('share-modal');
     const previewTextarea = document.getElementById('share-preview-text');
@@ -580,19 +611,32 @@ window.closeShareModal = function() {
 };
 
 window.toggleGroupComplete = async function(idx) {
-    groupedBatch[idx].completed = !groupedBatch[idx].completed;
+    const group = groupedBatch[idx];
+    if (!group) return;
+
+    const shouldComplete = !group.completed;
+    group.completed = shouldComplete;
+
+    group.items.forEach((item) => {
+        const key = getAddressKey(item.full_address, item.city, item.zip);
+        addressStatuses.set(key, shouldComplete ? 'letter' : 'home');
+    });
+
     renderResults(groupedBatch);
+    scheduleAddressStatusSync();
 
     if (currentBatchId) {
         try {
             const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
             const fieldPath = `data.${idx}.completed`;
-            await updateDoc(batchRef, { [fieldPath]: groupedBatch[idx].completed });
-            showToast("Group completion synced", "success");
+            await updateDoc(batchRef, { [fieldPath]: group.completed });
+            showToast(shouldComplete ? "Group marked as letters" : "Group reset to home", "success");
         } catch (e) {
             console.error("Toggle Complete Error:", e);
             showToast("Failed to sync", "error");
         }
+    } else {
+        showToast(shouldComplete ? "Group marked as letters" : "Group reset to home", "success");
     }
 };
 
@@ -664,11 +708,11 @@ window.confirmSave = async function() {
 
 async function loadHistory() {
     if (!currentUser || currentUser.isAnonymous) return;
+
     const tableBody = document.getElementById("db-table-body");
     tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-400 italic">Loading history...</td></tr>';
 
     try {
-        // Rule 2: Fetch only simple collections without orderBy filters, then sort in JS memory
         const querySnapshot = await getDocs(getCollectionRef(currentDbSubTab));
         let batches = [];
         querySnapshot.forEach((doc) => batches.push({ id: doc.id, ...doc.data() }));
@@ -679,34 +723,42 @@ async function loadHistory() {
             return;
         }
 
-        tableBody.innerHTML = "";
-        batches.forEach(batch => {
-            const tr = document.createElement("tr");
-            const creatorLine = currentDbSubTab === 'public' 
-                ? `<div class="text-[10px] text-gray-400 font-bold uppercase mt-1">Shared by: ${batch.createdBy || 'Unknown'}</div>` 
+        const batchesHtml = batches.map(batch => {
+            const creatorLine = currentDbSubTab === 'public'
+                ? `<div class="text-[10px] text-gray-400 font-bold uppercase mt-1">Shared by: ${batch.createdBy || 'Unknown'}</div>`
                 : '';
-                
-            tr.innerHTML = `
-                <td class="px-6 py-4">
-                    <div class="font-bold text-gray-800">${batch.name}</div>
-                    <div class="text-[10px] text-gray-400">${new Date(batch.timestamp).toLocaleString()}</div>
-                </td>
-                <td class="px-6 py-4">
-                    <div class="text-xs text-gray-600">${batch.data.length} Groups</div>
-                    ${creatorLine}
-                </td>
-                <td class="px-6 py-4 text-right">
-                    <div class="flex justify-end gap-3 items-center">
-                        <button onclick="window.viewBatch('${batch.id}', '${currentDbSubTab}')" class="text-cardinal font-black hover:underline text-[10px] uppercase">View</button>
-                        <button onclick="window.requestDeleteBatch('${batch.id}', '${currentDbSubTab}')" class="text-gray-300 hover:text-red-600 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                        </button>
-                    </div>
-                </td>
+            
+            window[`batchData_${batch.id}`] = { 
+                data: batch.data, 
+                addressStatuses: batch.addressStatuses || {}, 
+                id: batch.id, 
+                source: currentDbSubTab 
+            };
+
+            return `
+                <tr>
+                    <td class="px-6 py-4">
+                        <div class="font-bold text-gray-800">${batch.name}</div>
+                        <div class="text-[10px] text-gray-400">${new Date(batch.timestamp).toLocaleString()}</div>
+                    </td>
+                    <td class="px-6 py-4">
+                        <div class="text-xs text-gray-600">${batch.data.length} Groups</div>
+                        ${creatorLine}
+                    </td>
+                    <td class="px-6 py-4 text-right">
+                        <div class="flex justify-end gap-3 items-center">
+                            <button onclick="window.viewBatch('${batch.id}', '${currentDbSubTab}')" class="text-cardinal font-black hover:underline text-[10px] uppercase">View</button>
+                            <button onclick="window.requestDeleteBatch('${batch.id}', '${currentDbSubTab}')" class="text-gray-300 hover:text-red-600 transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
             `;
-            window[`batchData_${batch.id}`] = { data: batch.data, addressStatuses: batch.addressStatuses || {}, id: batch.id, source: currentDbSubTab };
-            tableBody.appendChild(tr);
-        });
+        }).join('');
+
+        tableBody.innerHTML = batchesHtml;
+
     } catch (error) {
         console.error("Load History Error: ", error);
         tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-red-500">Error loading history</td></tr>';
