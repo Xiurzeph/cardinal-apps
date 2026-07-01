@@ -235,6 +235,17 @@ function chunkArray(array, size) {
     return result;
 }
 
+function normalizeBatchData(data) {
+    if (Array.isArray(data)) return data;
+    if (!data || typeof data !== 'object') return [];
+
+    return Object.entries(data)
+        .filter(([key]) => /^\d+$/.test(key))
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(([, value]) => value)
+        .filter(Boolean);
+}
+
 /**
  * Main execution function with high-performance geocoder in-session caching
  */
@@ -622,14 +633,15 @@ window.toggleGroupComplete = async function(idx) {
         addressStatuses.set(key, shouldComplete ? 'letter' : 'home');
     });
 
+    groupedBatch = groupedBatch.map((entry, index) => index === idx ? { ...entry, completed: shouldComplete } : entry);
+
     renderResults(groupedBatch);
     scheduleAddressStatusSync();
 
     if (currentBatchId) {
         try {
             const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
-            const fieldPath = `data.${idx}.completed`;
-            await updateDoc(batchRef, { [fieldPath]: group.completed });
+            await updateDoc(batchRef, { data: groupedBatch });
             showToast(shouldComplete ? "Group marked as letters" : "Group reset to home", "success");
         } catch (e) {
             console.error("Toggle Complete Error:", e);
@@ -729,7 +741,7 @@ async function loadHistory() {
                 : '';
             
             window[`batchData_${batch.id}`] = { 
-                data: batch.data, 
+                data: normalizeBatchData(batch.data), 
                 addressStatuses: batch.addressStatuses || {}, 
                 id: batch.id, 
                 source: currentDbSubTab 
@@ -742,7 +754,7 @@ async function loadHistory() {
                         <div class="text-[10px] text-gray-400">${new Date(batch.timestamp).toLocaleString()}</div>
                     </td>
                     <td class="px-6 py-4">
-                        <div class="text-xs text-gray-600">${batch.data.length} Groups</div>
+                        <div class="text-xs text-gray-600">${normalizeBatchData(batch.data).length} Groups</div>
                         ${creatorLine}
                     </td>
                     <td class="px-6 py-4 text-right">
@@ -768,7 +780,7 @@ async function loadHistory() {
 window.viewBatch = function(batchId, source = 'private') {
     const entry = window[`batchData_${batchId}`];
     if (entry) {
-        groupedBatch = entry.data;
+        groupedBatch = normalizeBatchData(entry.data);
         currentBatchId = entry.id;
         currentBatchSource = source || entry.source || 'private';
         
