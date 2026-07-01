@@ -98,7 +98,6 @@
             </div>
 
             <div id="tab-database" class="hidden max-w-5xl mx-auto">
-                <!-- Sub-tabs for Private vs Shared/Public Database Views -->
                 <div class="flex gap-4 mb-6 border-b border-gray-200 no-print">
                     <button onclick="window.switchDbSubTab('private')" id="btn-subtab-private" class="font-bold text-sm pb-2 border-b-2 border-cardinal text-cardinal transition-all">My Private Batches</button>
                     <button onclick="window.switchDbSubTab('public')" id="btn-subtab-public" class="font-bold text-sm pb-2 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-all">Team Shared Batches</button>
@@ -120,7 +119,6 @@
         </main>
     </div>
 
-    <!-- Save Batch Modal -->
     <div id="save-batch-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all">
             <div class="bg-cardinal p-6 text-white text-center">
@@ -131,7 +129,6 @@
                 <label class="block text-gray-500 text-[10px] uppercase font-black mb-2 tracking-widest">Batch Name</label>
                 <input type="text" id="batch-name-input" class="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-4 py-3 text-gray-800 font-bold focus:border-cardinal focus:outline-none transition-all mb-4" placeholder="Enter batch name...">
                 
-                <!-- Collaborative Share Option Toggle -->
                 <div class="flex items-center gap-3 bg-gray-50 p-4 rounded-xl border-2 border-gray-100 mb-6">
                     <input id="chkSavePublic" type="checkbox" class="accent-cardinal w-5 h-5 cursor-pointer">
                     <div class="text-left">
@@ -148,7 +145,6 @@
         </div>
     </div>
 
-    <!-- Enhanced Share Service Modal -->
     <div id="share-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4 hidden">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all">
             <div class="bg-cardinal p-6 text-white text-center">
@@ -160,25 +156,21 @@
                     <label class="block text-gray-500 text-[10px] uppercase font-black tracking-widest">Message Preview</label>
                     <span class="text-[9px] text-gray-400 font-semibold italic">Tap text box to select all</span>
                 </div>
-                <!-- Added auto-focus and full-selection on tap for failsafe manual copy -->
                 <textarea id="share-preview-text" readonly onclick="this.focus(); this.select();" class="w-full h-36 bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 text-xs font-mono mb-6 resize-none focus:outline-none focus:ring-2 focus:ring-cardinal/25 cursor-pointer" title="Click to instantly select all text"></textarea>
                 
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-                    <!-- Text/SMS Button -->
                     <a id="share-sms-btn" href="#" class="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-gray-100 hover:border-cardinal hover:bg-red-50/20 transition-all text-center">
                         <svg class="w-6 h-6 text-cardinal mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
                         </svg>
                         <span class="text-xs font-bold text-gray-700">Text Message</span>
                     </a>
-                    <!-- Email Button -->
                     <a id="share-email-btn" href="#" class="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-gray-100 hover:border-cardinal hover:bg-red-50/20 transition-all text-center">
                         <svg class="w-6 h-6 text-cardinal mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                         </svg>
                         <span class="text-xs font-bold text-gray-700">Email</span>
                     </a>
-                    <!-- Direct Copy Button -->
                     <button onclick="window.copyShareText()" class="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-gray-100 hover:border-cardinal hover:bg-red-50/20 transition-all text-center focus:outline-none">
                         <svg class="w-6 h-6 text-cardinal mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path>
@@ -188,7 +180,6 @@
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
-                    <!-- Added Close & Complete shortcut button -->
                     <button onclick="window.completeAndCloseShare()" class="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase hover:shadow-lg hover:shadow-emerald-100 transition-all">Complete & Close</button>
                     <button onclick="window.closeShareModal()" class="w-full py-3.5 rounded-xl border-2 border-gray-100 text-gray-400 font-black text-xs uppercase hover:bg-gray-50 transition-all">Close</button>
                 </div>
@@ -196,7 +187,6 @@
         </div>
     </div>
 
-    <!-- Confirmation Dialog Modal -->
     <div id="confirm-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4 hidden">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all text-center p-8">
             <h3 id="confirm-modal-title" class="text-xl font-bold text-gray-800 mb-2">Confirm</h3>
