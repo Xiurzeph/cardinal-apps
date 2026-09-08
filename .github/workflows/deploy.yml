@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
 
+# Add this block to grant write access
+permissions:
+  contents: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
