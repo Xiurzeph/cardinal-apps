@@ -34,8 +34,10 @@ let currentTab = 'formatter';
 let currentDbSubTab = 'private'; // Sub-navigation inside history tab
 let activeShareText = ''; // Temporarily stores text generated for active sharing instance
 let activeShareGroupIndex = null; // Tracks index of the active group being shared
+window.currentCounty = 'prince_georges'; // New: Default to Prince George's County (now on window for global access)
+window.groupedBatch = groupedBatch; // Expose to window for handleCountyChange
 
-// --- Runtime In-Session Memory Caching ---
+// --- Runtime In-Session Memory Caching ---\
 const addressCache = new Map();
 
 // --- Address Status Management ---
@@ -63,6 +65,15 @@ const ADDRESS_STATUSES = [
 
 function getAddressKey(address, city, zip) {
     return `${address}|${city}|${zip}`;
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function getStatusStyle(status) {
@@ -144,10 +155,10 @@ function scheduleAddressStatusSync() {
                 }
             }
 
-            showToast('Batch status synced', 'success');
+            window.showToast('Batch status synced', 'success');
         } catch (err) {
             console.error('Address status sync failed', err);
-            showToast('Status sync failed', 'error');
+            window.showToast('Status sync failed', 'error');
         } finally {
             addressStatusSyncInProgress = false;
         }
@@ -171,19 +182,31 @@ window.cycleAddressStatus = function(full_address, city, zip, event) {
     addressStatuses.set(key, newStatus);
     
     // Re-render the results to show updated status
-    renderResults(groupedBatch);
+    window.renderResults(groupedBatch);
     
     // Schedule an async sync call to update the saved batch without overwhelming Firestore
     scheduleAddressStatusSync();
     
     // Show toast notification
-    showToast(`${full_address} → ${newStatus}`);
+    window.showToast(`${full_address} → ${newStatus}`);
 };
 
 // --- API Constants ---
 const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_PropertyData/MapServer/0/query";
 // Reverted back to the working MultiroleLocator since CompositeLocator is 404 on the new server
 const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_MultiroleLocator/GeocodeServer/findAddressCandidates";
+
+// Function to get the county name for geocoding and the JURSCODE for property data
+window.getCountyInfo = function(countyValue) { // Expose to window for index.html
+    switch (countyValue) {
+        case 'prince_georges':
+            return { name: "Prince George's County", jurscode: "PRIN" };
+        case 'montgomery':
+            return { name: "Montgomery County", jurscode: "MONT" };
+        default:
+            return { name: "Prince George's County", jurscode: "PRIN" }; // Default
+    }
+}
 
 // --- Auth State Listener ---
 onAuthStateChanged(auth, (user) => {
@@ -226,6 +249,17 @@ function chunkArray(array, size) {
     return result;
 }
 
+function normalizeBatchData(data) {
+    if (Array.isArray(data)) return data;
+    if (!data || typeof data !== 'object') return [];
+
+    return Object.entries(data)
+        .filter(([key]) => /^\d+$/.test(key))
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(([, value]) => value)
+        .filter(Boolean);
+}
+
 /**
  * Main execution function with high-performance geocoder in-session caching
  */
@@ -233,7 +267,7 @@ async function runLookupAndFormat() {
     const input = document.getElementById('csvInput').value;
     const ownerOccupiedOnly = document.getElementById('chkOwnerOccupied').checked;
     
-    if (!input.trim()) return showToast("Please enter at least one address.", "error");
+    if (!input.trim()) return window.showToast("Please enter at least one address.", "error");
     
     const lines = input.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     const validAddresses = [];
@@ -245,7 +279,7 @@ async function runLookupAndFormat() {
         if (cleanAddr) validAddresses.push({ original: line, cleaned: cleanAddr });
     }
 
-    if (validAddresses.length === 0) return showToast("No valid addresses found.", "error");
+    if (validAddresses.length === 0) return window.showToast("No valid addresses found.", "error");
 
     startProgressModal(validAddresses.length);
     const results = [];
@@ -287,13 +321,13 @@ async function runLookupAndFormat() {
     }
 
     groupedBatch = chunkArray(results, 5);
-    renderResults(groupedBatch);
+    window.renderResults(groupedBatch);
     hideProgressModal();
     
     if (cachedHits > 0) {
-        showToast(`Found ${results.length} properties in ${groupedBatch.length} groups (${cachedHits} served from speed cache).`);
+        window.showToast(`Found ${results.length} properties in ${groupedBatch.length} groups (${cachedHits} served from speed cache).`);
     } else {
-        showToast(`Found ${results.length} properties in ${groupedBatch.length} groups.`);
+        window.showToast(`Found ${results.length} properties in ${groupedBatch.length} groups.`);
     }
 }
 
@@ -304,8 +338,10 @@ async function runLookupAndFormat() {
  */
 async function fetchPropertyData(addressStr) {
     try {
+        const countyInfo = window.getCountyInfo(window.currentCounty); // Use currentCounty from window
+
         // Step 1: Geocode with local bias
-        const biasedSearch = `${addressStr}, Prince George's County, MD`;
+        const biasedSearch = `${addressStr}, ${countyInfo.name}, MD`; // Use countyInfo.name
         const geocodeParams = new URLSearchParams({ 
             SingleLine: biasedSearch, 
             f: 'json', 
@@ -320,14 +356,14 @@ async function fetchPropertyData(addressStr) {
         let standardizedBase = addressStr.toUpperCase();
         
         if (geoData.candidates && geoData.candidates.length > 0) {
-            // PRIORITIZATION LOGIC: Look for PG County in the address string OR the County attribute
+            // PRIORITIZATION LOGIC: Look for selected County in the address string OR the County attribute
             let bestMatch = geoData.candidates.find(c => {
                 const addrStr = c.address ? c.address.toUpperCase() : "";
                 const countyStr = c.attributes && c.attributes.County ? c.attributes.County.toUpperCase() : "";
-                return addrStr.includes("PRINCE GEORGE") || countyStr.includes("PRINCE GEORGE");
+                return addrStr.includes(countyInfo.name.toUpperCase()) || countyStr.includes(countyInfo.name.toUpperCase());
             });
 
-            // Only use the geocoder string if we confirmed it belongs to PG County
+            // Only use the geocoder string if we confirmed it belongs to the selected County
             if (bestMatch) {
                 let addressParts = bestMatch.address.split(',');
                 let parsedBase = addressParts[0].trim().toUpperCase();
@@ -345,12 +381,12 @@ async function fetchPropertyData(addressStr) {
         const street = addrTokens[1] || '';
 
         // Strict Wildcard Logic: Prevents "ELM" from bleeding into "ELMHURST"
-        let exactWhere = `UPPER(ADDRESS) LIKE '${num}%' AND JURSCODE = 'PRIN'`;
+        let exactWhere = `UPPER(ADDRESS) LIKE '${num}%' AND JURSCODE = '${countyInfo.jurscode}'`; // Use countyInfo.jurscode
         if (street) {
-            exactWhere = `(UPPER(ADDRESS) LIKE '${num} %${street} %' OR UPPER(ADDRESS) LIKE '${num} %${street}') AND JURSCODE = 'PRIN'`;
+            exactWhere = `(UPPER(ADDRESS) LIKE '${num} %${street} %' OR UPPER(ADDRESS) LIKE '${num} %${street}') AND JURSCODE = '${countyInfo.jurscode}'`; // Use countyInfo.jurscode
         }
 
-        // Step 2: Query Property DB with strict PRIN priority
+        // Step 2: Query Property DB with strict county priority
         const queryParams = new URLSearchParams({
             where: exactWhere,
             outFields: 'ADDRESS,OOI,SDATWEBADR,CITY,ZIPCODE',
@@ -378,76 +414,97 @@ async function fetchPropertyData(addressStr) {
     return null;
 }
 
-function renderResults(groups) {
+window.renderResults = function(groups) { // Expose to window for handleCountyChange
     const canvas = document.getElementById('outputCanvas');
     const saveContainer = document.getElementById('btn-save-container');
+    const countyInfo = window.getCountyInfo(window.currentCounty); // Get county info for rendering
 
     if (groups.length === 0) {
-        canvas.innerHTML = `<div class="p-12 text-center text-gray-400 font-medium">No properties found in Prince George's County.</div>`;
+        canvas.innerHTML = `<div class=\"p-12 text-center text-gray-400 font-medium\">No properties found in ${countyInfo.name}.</div>`; // Update message
         if (saveContainer) saveContainer.classList.add('hidden');
         return;
     }
 
-    let html = '';
-
-    groups.forEach((group, gIdx) => {
+    const html = groups.map((group, gIdx) => {
         const isDone = group.completed;
 
-        html += `
-            <div class="mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}">
-                <div class="bg-gray-50 px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4">
-                    <div class="flex items-center gap-3">
-                        <span class="bg-cardinal text-white text-[10px] font-black px-2 py-1 rounded uppercase tracking-tighter">Group ${gIdx + 1}</span>
-                        <h3 class="text-sm font-bold text-gray-800 ${isDone ? 'line-through' : ''}">${group.items.length} Properties</h3>
+        const itemsHtml = group.items.map(item => {
+            const key = getAddressKey(item.full_address, item.city, item.zip);
+            const status = addressStatuses.get(key) || 'home';
+            const styleInfo = getStatusStyle(status);
+
+            const statusIndicator = status !== 'home' 
+                ? `<div class=\"text-[9px] font-bold uppercase mt-2 opacity-75\">${styleInfo.indicator}</div>` 
+                : '';
+            const safeAddress = escapeHtml(item.full_address);
+            const safeCityText = escapeHtml(item.city);
+            const safeZipText = escapeHtml(item.zip);
+            const addressKey = escapeHtml(getAddressKey(item.full_address, item.city, item.zip));
+
+            return `
+                <tr class=\"${isDone ? 'line-through text-gray-400' : ''} cursor-pointer hover:opacity-80 transition-opacity\" data-address-key=\"${addressKey}\" title=\"Click to cycle status\">
+                    <td class=\"p-4\">
+                        <div class=\"p-3 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all\">
+                            <div class=\"text-sm font-bold\">${safeAddress}</div>
+                            <div class=\"text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1\">${safeCityText}, MD ${safeZipText}</div>
+                            ${statusIndicator}
+                        </div>
+                    </td>
+                    <td class=\"p-4\">
+                        <span class=\"px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}\">
+                            ${item.occupancy}
+                        </span>
+                    </td>
+                    <td class=\"p-4 text-right\">
+                        <a href=\"${item.sdat_url}\" target=\"_blank\" class=\"text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}\">
+                            ProLookup LINK
+                        </a>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        return `
+            <div class=\"mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}\">
+                <div class=\"bg-gray-50 px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4\">
+                    <div class=\"flex items-center gap-3\">
+                        <span class=\"bg-cardinal text-white text-[10px] font-black px-2 py-1 rounded uppercase tracking-tighter\">Group ${gIdx + 1}</span>
+                        <h3 class=\"text-sm font-bold text-gray-800 ${isDone ? 'line-through' : ''}\">${group.items.length} Properties</h3>
                     </div>
-                    
-                    <div class="flex items-center gap-2">
-                        <button onclick="shareGroup(${gIdx})" class="bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">
+                    <div class=\"flex items-center gap-2\">
+                        <button onclick=\"window.shareGroup(${gIdx})\" class=\"bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}\">
                             Share Group
                         </button>
-                        <button onclick="toggleGroupComplete(${gIdx})" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
+                        <button onclick=\"window.toggleGroupComplete(${gIdx})\" class=\"px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}\">
                             ${isDone ? 'Undo' : 'Complete'}
                         </button>
                     </div>
                 </div>
-
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse">
-                        <tbody class="divide-y divide-gray-100">
-                            ${group.items.map(item => {
-                                const key = getAddressKey(item.full_address, item.city, item.zip);
-                                const status = addressStatuses.get(key) || 'home';
-                                const styleInfo = getStatusStyle(status);
-                                return `
-                                    <tr class="${isDone ? 'line-through text-gray-400' : ''} cursor-pointer hover:opacity-80 transition-opacity" onclick="window.cycleAddressStatus('${item.full_address.replace(/'/g, "\\'")}'${', ' + "'" + item.city + "'" + ', ' + "'" + item.zip + "'"}, event)" title="Click to cycle status">
-                                        <td class="p-4">
-                                            <div class="p-3 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all">
-                                                <div class="text-sm font-bold">${item.full_address}</div>
-                                                <div class="text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1">${item.city}, MD ${item.zip}</div>
-                                                ${status !== 'home' ? `<div class="text-[9px] font-bold uppercase mt-2 opacity-75">${styleInfo.indicator}</div>` : ''}
-                                            </div>
-                                        </td>
-                                        <td class="p-4">
-                                            <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}">
-                                                ${item.occupancy}
-                                            </span>
-                                        </td>
-                                        <td class="p-4 text-right">
-                                            <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}" onclick="event.stopPropagation()">
-                                                ProLookup LINK
-                                            </a>
-                                        </td>
-                                    </tr>
-                                `;
-                            }).join('')}
-                        </tbody>
+                <div class=\"overflow-x-auto\">
+                    <table class=\"w-full text-left border-collapse\">
+                        <tbody class=\"divide-y divide-gray-100\">${itemsHtml}</tbody>
                     </table>
                 </div>
             </div>
         `;
-    });
+    }).join('');
 
     canvas.innerHTML = html;
+
+    canvas.querySelectorAll('tr[data-address-key]').forEach((row) => {
+        row.addEventListener('click', (event) => {
+            const addressKey = row.getAttribute('data-address-key');
+            if (!addressKey) return;
+            const [full_address, city, zip] = addressKey.split('|');
+            window.cycleAddressStatus(full_address, city, zip, event);
+        });
+
+        row.querySelectorAll('a').forEach((link) => {
+            link.addEventListener('click', (event) => {
+                event.stopPropagation();
+            });
+        });
+    });
     
     if (saveContainer) {
         if (currentUser && !currentUser.isAnonymous) {
@@ -456,7 +513,7 @@ function renderResults(groups) {
             saveContainer.classList.add('hidden');
         }
     }
-}
+};
 
 /**
  * Share Group triggers the brand new integrated Share Service Panel
@@ -466,8 +523,10 @@ window.shareGroup = function(idx) {
     activeShareGroupIndex = idx; // Save shared index context
     
     // Explicit format matching: correct "Addresses" spelling and "PropLookup:" service prefix
-    activeShareText = `Addresses ${idx + 1}:\n` + 
-        group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  PropLookup: ${i.sdat_url}`).join('\n\n');
+    activeShareText = [
+        `Addresses ${idx + 1}:`,
+        ...group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  PropLookup: ${i.sdat_url}`)
+    ].join('\n\n');
 
     const modal = document.getElementById('share-modal');
     const previewTextarea = document.getElementById('share-preview-text');
@@ -510,7 +569,7 @@ window.copyShareText = function() {
     const previewTextarea = document.getElementById('share-preview-text');
     
     if (!previewTextarea) {
-        showToast("No element found to copy", "error");
+        window.showToast("No element found to copy", "error");
         return;
     }
 
@@ -522,7 +581,7 @@ window.copyShareText = function() {
     const textToCopy = previewTextarea.value || activeShareText;
 
     if (!textToCopy) {
-        showToast("No text to copy", "error");
+        window.showToast("No text to copy", "error");
         return;
     }
 
@@ -530,7 +589,7 @@ window.copyShareText = function() {
     if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(textToCopy)
             .then(() => {
-                showToast("Group copied to clipboard!");
+                window.showToast("Group copied to clipboard!");
             })
             .catch(() => {
                 fallbackCopyText(previewTextarea);
@@ -551,12 +610,12 @@ function fallbackCopyText(textareaElement) {
         
         const successful = document.execCommand('copy');
         if (successful) {
-            showToast("Group copied to clipboard!");
+            window.showToast("Group copied to clipboard!");
         } else {
-            showToast("Clipboard restricted. Please tap message to copy manually.", "error");
+            window.showToast("Clipboard restricted. Please tap message to copy manually.", "error");
         }
     } catch (err) {
-        showToast("Clipboard restricted. Please tap message to copy manually.", "error");
+        window.showToast("Clipboard restricted. Please tap message to copy manually.", "error");
     }
 }
 
@@ -580,19 +639,33 @@ window.closeShareModal = function() {
 };
 
 window.toggleGroupComplete = async function(idx) {
-    groupedBatch[idx].completed = !groupedBatch[idx].completed;
-    renderResults(groupedBatch);
+    const group = groupedBatch[idx];
+    if (!group) return;
+
+    const shouldComplete = !group.completed;
+    group.completed = shouldComplete;
+
+    group.items.forEach((item) => {
+        const key = getAddressKey(item.full_address, item.city, item.zip);
+        addressStatuses.set(key, shouldComplete ? 'letter' : 'home');
+    });
+
+    groupedBatch = groupedBatch.map((entry, index) => index === idx ? { ...entry, completed: shouldComplete } : entry);
+
+    window.renderResults(groupedBatch);
+    scheduleAddressStatusSync();
 
     if (currentBatchId) {
         try {
             const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
-            const fieldPath = `data.${idx}.completed`;
-            await updateDoc(batchRef, { [fieldPath]: groupedBatch[idx].completed });
-            showToast("Group completion synced", "success");
+            await updateDoc(batchRef, { data: groupedBatch });
+            window.showToast(shouldComplete ? "Group marked as letters" : "Group reset to home", "success");
         } catch (e) {
             console.error("Toggle Complete Error:", e);
-            showToast("Failed to sync", "error");
+            window.showToast("Failed to sync", "error");
         }
+    } else {
+        window.showToast(shouldComplete ? "Group marked as letters" : "Group reset to home", "success");
     }
 };
 
@@ -613,8 +686,8 @@ function getCollectionRef(source = 'private') {
 }
 
 window.saveOrUpdateBatch = function() {
-    if (!currentUser || currentUser.isAnonymous) return showToast("Guests cannot save", "error");
-    if (groupedBatch.length === 0) return showToast("No data to save", "error");
+    if (!currentUser || currentUser.isAnonymous) return window.showToast("Guests cannot save", "error");
+    if (groupedBatch.length === 0) return window.showToast("No data to save", "error");
 
     const modal = document.getElementById('save-batch-modal');
     const input = document.getElementById('batch-name-input');
@@ -629,7 +702,7 @@ window.saveOrUpdateBatch = function() {
 
 window.confirmSave = async function() {
     const batchName = document.getElementById('batch-name-input').value.trim();
-    if (!batchName) return showToast("Enter a name", "error");
+    if (!batchName) return window.showToast("Enter a name", "error");
 
     const isPublic = document.getElementById('chkSavePublic').checked;
     const targetSource = isPublic ? 'public' : 'private';
@@ -654,69 +727,77 @@ window.confirmSave = async function() {
             lastSyncedStatuses.set(k, v);
         }
 
-        showToast(`Batch saved to ${isPublic ? 'Team Shared' : 'Private'} history!`, "success");
+        window.showToast(`Batch saved to ${isPublic ? 'Team Shared' : 'Private'} history!`, "success");
         window.closeSaveModal();
     } catch (error) {
         console.error("Confirm Save Error: ", error);
-        showToast("Save failed", "error");
+        window.showToast("Save failed", "error");
     }
 };
 
 async function loadHistory() {
     if (!currentUser || currentUser.isAnonymous) return;
+
     const tableBody = document.getElementById("db-table-body");
-    tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-400 italic">Loading history...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan=\"3\" class=\"p-4 text-center text-gray-400 italic\">Loading history...</td></tr>';
 
     try {
-        // Rule 2: Fetch only simple collections without orderBy filters, then sort in JS memory
         const querySnapshot = await getDocs(getCollectionRef(currentDbSubTab));
         let batches = [];
         querySnapshot.forEach((doc) => batches.push({ id: doc.id, ...doc.data() }));
         batches.sort((a, b) => b.timestamp - a.timestamp);
 
         if (batches.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-gray-500">No ${currentDbSubTab} batches found.</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan=\"3\" class=\"p-4 text-center text-gray-500\">No ${currentDbSubTab} batches found.</td></tr>`;
             return;
         }
 
-        tableBody.innerHTML = "";
-        batches.forEach(batch => {
-            const tr = document.createElement("tr");
-            const creatorLine = currentDbSubTab === 'public' 
-                ? `<div class="text-[10px] text-gray-400 font-bold uppercase mt-1">Shared by: ${batch.createdBy || 'Unknown'}</div>` 
+        const batchesHtml = batches.map(batch => {
+            const creatorLine = currentDbSubTab === 'public'
+                ? `<div class=\"text-[10px] text-gray-400 font-bold uppercase mt-1\">Shared by: ${batch.createdBy || 'Unknown'}</div>`
                 : '';
-                
-            tr.innerHTML = `
-                <td class="px-6 py-4">
-                    <div class="font-bold text-gray-800">${batch.name}</div>
-                    <div class="text-[10px] text-gray-400">${new Date(batch.timestamp).toLocaleString()}</div>
-                </td>
-                <td class="px-6 py-4">
-                    <div class="text-xs text-gray-600">${batch.data.length} Groups</div>
-                    ${creatorLine}
-                </td>
-                <td class="px-6 py-4 text-right">
-                    <div class="flex justify-end gap-3 items-center">
-                        <button onclick="window.viewBatch('${batch.id}', '${currentDbSubTab}')" class="text-cardinal font-black hover:underline text-[10px] uppercase">View</button>
-                        <button onclick="window.requestDeleteBatch('${batch.id}', '${currentDbSubTab}')" class="text-gray-300 hover:text-red-600 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                        </button>
-                    </div>
-                </td>
+            
+            window[`batchData_${batch.id}`] = { 
+                data: normalizeBatchData(batch.data), 
+                addressStatuses: batch.addressStatuses || {}, 
+                id: batch.id, 
+                source: currentDbSubTab 
+            };
+
+            return `
+                <tr>
+                    <td class=\"px-6 py-4\">
+                        <div class=\"font-bold text-gray-800\">${batch.name}</div>
+                        <div class=\"text-[10px] text-gray-400\">${new Date(batch.timestamp).toLocaleString()}</div>
+                    </td>
+                    <td class=\"px-6 py-4\">
+                        <div class=\"text-xs text-gray-600\">${normalizeBatchData(batch.data).length} Groups</div>
+                        ${creatorLine}
+                    </td>
+                    <td class=\"px-6 py-4 text-right\">
+                        <div class=\"flex justify-end gap-3 items-center\">\
+                            <button onclick=\"window.viewBatch('${batch.id}', '${currentDbSubTab}')\" class=\"text-cardinal font-black hover:underline text-[10px] uppercase\">View</button>\
+                            <button onclick=\"window.requestDeleteBatch('${batch.id}', '${currentDbSubTab}')\" class=\"text-gray-300 hover:text-red-600 transition-colors\">\
+                                <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16\"></path></svg>\
+                            </button>\
+                        </div>\
+                    </td>\
+                </tr>\
             `;
-            window[`batchData_${batch.id}`] = { data: batch.data, addressStatuses: batch.addressStatuses || {}, id: batch.id, source: currentDbSubTab };
-            tableBody.appendChild(tr);
-        });
+        }).join('');
+
+        tableBody.innerHTML = batchesHtml;
+
     } catch (error) {
         console.error("Load History Error: ", error);
-        tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-red-500">Error loading history</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan=\"3\" class=\"p-4 text-center text-red-500\">Error loading history</td></tr>';
     }
 }
 
 window.viewBatch = function(batchId, source = 'private') {
     const entry = window[`batchData_${batchId}`];
     if (entry) {
-        groupedBatch = entry.data;
+        groupedBatch = normalizeBatchData(entry.data);
         currentBatchId = entry.id;
         currentBatchSource = source || entry.source || 'private';
         
@@ -735,37 +816,37 @@ window.viewBatch = function(batchId, source = 'private') {
             }
         }
         
-        renderResults(groupedBatch);
+        window.renderResults(groupedBatch);
         window.switchTab('formatter');
-        showToast(`Loaded ${currentBatchSource === 'public' ? 'Team Shared' : 'Private'} batch`);
+        window.showToast(`Loaded ${currentBatchSource === 'public' ? 'Team Shared' : 'Private'} batch`);
     }
 };
 
 window.requestDeleteBatch = function(id, source = 'private') {
     const targetSource = source || 'private';
-    openConfirmModal("Delete this batch?", "This action cannot be undone.", async () => {
+    window.openConfirmModal("Delete this batch?", "This action cannot be undone.", async () => {
         try {
             await deleteDoc(doc(getCollectionRef(targetSource), id));
-            showToast("Batch deleted");
+            window.showToast("Batch deleted");
             loadHistory();
-        } catch (e) { showToast("Delete failed", "error"); }
+        } catch (e) { window.showToast("Delete failed", "error"); }
     });
 };
 
 window.requestClearAllHistory = function() {
-    openConfirmModal("Clear All History?", "This will permanently delete everything in your current tab view.", async () => {
+    window.openConfirmModal("Clear All History?", "This will permanently delete everything in your current tab view.", async () => {
         try {
             const querySnapshot = await getDocs(getCollectionRef(currentDbSubTab));
             const deletes = [];
             querySnapshot.forEach(d => deletes.push(deleteDoc(d.ref)));
             await Promise.all(deletes);
-            showToast("History cleared");
+            window.showToast("History cleared");
             loadHistory();
-        } catch (e) { showToast("Clear failed", "error"); }
+        } catch (e) { window.showToast("Clear failed", "error"); }
     });
 };
 
-function openConfirmModal(title, msg, callback) {
+window.openConfirmModal = function(title, msg, callback) {
     const modal = document.getElementById('confirm-modal');
     document.getElementById('confirm-modal-title').innerText = title;
     document.getElementById('confirm-modal-msg').innerText = msg;
@@ -791,15 +872,15 @@ window.googleLogin = async function() {
     try {
         const provider = new GoogleAuthProvider();
         await signInWithPopup(auth, provider);
-        showToast("Logged in");
-    } catch (error) { showToast("Login failed", "error"); }
+        window.showToast("Logged in");
+    } catch (error) { window.showToast("Login failed", "error"); }
 };
 
 window.guestLogin = async function() {
     try {
         await signInAnonymously(auth);
-        showToast("Guest session started");
-    } catch (error) { showToast("Guest login failed", "error"); }
+        window.showToast("Guest session started");
+    } catch (error) { window.showToast("Guest login failed", "error"); }
 };
 
 window.logout = async function() {
@@ -809,7 +890,7 @@ window.logout = async function() {
 
 window.switchTab = function(tab) {
     if (currentUser?.isAnonymous && tab === 'database') {
-        showToast("Guest users cannot access history", "error");
+        window.showToast("Guest users cannot access history", "error");
         return;
     }
     currentTab = tab;
@@ -864,7 +945,7 @@ function hideProgressModal() {
     if (modal) modal.classList.add('hidden');
 }
 
-function showToast(msg, type = "success") {
+window.showToast = function(msg, type = "success") { // Expose to window for global access
     const container = document.getElementById('toast-container');
     if (!container) return;
     const toast = document.createElement('div');
