@@ -34,6 +34,7 @@ let currentTab = 'formatter';
 let currentDbSubTab = 'private'; // Sub-navigation inside history tab
 let activeShareText = ''; // Temporarily stores text generated for active sharing instance
 let activeShareGroupIndex = null; // Tracks index of the active group being shared
+let currentCounty = 'prince_georges'; // New: Default to Prince George's County
 
 // --- Runtime In-Session Memory Caching ---
 const addressCache = new Map();
@@ -194,6 +195,18 @@ const MD_GEODATA_URL = "https://mdgeodata.md.gov/imap/rest/services/PlanningCada
 // Reverted back to the working MultiroleLocator since CompositeLocator is 404 on the new server
 const MD_LOCATOR_URL = "https://mdgeodata.md.gov/imap/rest/services/GeocodeServices/MD_MultiroleLocator/GeocodeServer/findAddressCandidates";
 
+// Function to get the county name for geocoding and the JURSCODE for property data
+function getCountyInfo(countyValue) {
+    switch (countyValue) {
+        case 'prince_georges':
+            return { name: "Prince George's County", jurscode: "PRIN" };
+        case 'montgomery':
+            return { name: "Montgomery County", jurscode: "MONT" };
+        default:
+            return { name: "Prince George's County", jurscode: "PRIN" }; // Default
+    }
+}
+
 // --- Auth State Listener ---
 onAuthStateChanged(auth, (user) => {
     currentUser = user;
@@ -324,8 +337,10 @@ async function runLookupAndFormat() {
  */
 async function fetchPropertyData(addressStr) {
     try {
+        const countyInfo = getCountyInfo(currentCounty); // Use currentCounty
+
         // Step 1: Geocode with local bias
-        const biasedSearch = `${addressStr}, Prince George's County, MD`;
+        const biasedSearch = `${addressStr}, ${countyInfo.name}, MD`; // Use countyInfo.name
         const geocodeParams = new URLSearchParams({ 
             SingleLine: biasedSearch, 
             f: 'json', 
@@ -340,14 +355,14 @@ async function fetchPropertyData(addressStr) {
         let standardizedBase = addressStr.toUpperCase();
         
         if (geoData.candidates && geoData.candidates.length > 0) {
-            // PRIORITIZATION LOGIC: Look for PG County in the address string OR the County attribute
+            // PRIORITIZATION LOGIC: Look for selected County in the address string OR the County attribute
             let bestMatch = geoData.candidates.find(c => {
                 const addrStr = c.address ? c.address.toUpperCase() : "";
                 const countyStr = c.attributes && c.attributes.County ? c.attributes.County.toUpperCase() : "";
-                return addrStr.includes("PRINCE GEORGE") || countyStr.includes("PRINCE GEORGE");
+                return addrStr.includes(countyInfo.name.toUpperCase()) || countyStr.includes(countyInfo.name.toUpperCase());
             });
 
-            // Only use the geocoder string if we confirmed it belongs to PG County
+            // Only use the geocoder string if we confirmed it belongs to the selected County
             if (bestMatch) {
                 let addressParts = bestMatch.address.split(',');
                 let parsedBase = addressParts[0].trim().toUpperCase();
@@ -365,12 +380,12 @@ async function fetchPropertyData(addressStr) {
         const street = addrTokens[1] || '';
 
         // Strict Wildcard Logic: Prevents "ELM" from bleeding into "ELMHURST"
-        let exactWhere = `UPPER(ADDRESS) LIKE '${num}%' AND JURSCODE = 'PRIN'`;
+        let exactWhere = `UPPER(ADDRESS) LIKE '${num}%' AND JURSCODE = '${countyInfo.jurscode}'`; // Use countyInfo.jurscode
         if (street) {
-            exactWhere = `(UPPER(ADDRESS) LIKE '${num} %${street} %' OR UPPER(ADDRESS) LIKE '${num} %${street}') AND JURSCODE = 'PRIN'`;
+            exactWhere = `(UPPER(ADDRESS) LIKE '${num} %${street} %' OR UPPER(ADDRESS) LIKE '${num} %${street}') AND JURSCODE = '${countyInfo.jurscode}'`; // Use countyInfo.jurscode
         }
 
-        // Step 2: Query Property DB with strict PRIN priority
+        // Step 2: Query Property DB with strict county priority
         const queryParams = new URLSearchParams({
             where: exactWhere,
             outFields: 'ADDRESS,OOI,SDATWEBADR,CITY,ZIPCODE',
@@ -401,9 +416,10 @@ async function fetchPropertyData(addressStr) {
 function renderResults(groups) {
     const canvas = document.getElementById('outputCanvas');
     const saveContainer = document.getElementById('btn-save-container');
+    const countyInfo = getCountyInfo(currentCounty); // Get county info for rendering
 
     if (groups.length === 0) {
-        canvas.innerHTML = `<div class="p-12 text-center text-gray-400 font-medium">No properties found in Prince George's County.</div>`;
+        canvas.innerHTML = `<div class=\"p-12 text-center text-gray-400 font-medium\">No properties found in ${countyInfo.name}.</div>`; // Update message
         if (saveContainer) saveContainer.classList.add('hidden');
         return;
     }
@@ -417,7 +433,7 @@ function renderResults(groups) {
             const styleInfo = getStatusStyle(status);
 
             const statusIndicator = status !== 'home' 
-                ? `<div class="text-[9px] font-bold uppercase mt-2 opacity-75">${styleInfo.indicator}</div>` 
+                ? `<div class=\"text-[9px] font-bold uppercase mt-2 opacity-75\">${styleInfo.indicator}</div>` 
                 : '';
             const safeAddress = escapeHtml(item.full_address);
             const safeCityText = escapeHtml(item.city);
@@ -425,21 +441,21 @@ function renderResults(groups) {
             const addressKey = escapeHtml(getAddressKey(item.full_address, item.city, item.zip));
 
             return `
-                <tr class="${isDone ? 'line-through text-gray-400' : ''} cursor-pointer hover:opacity-80 transition-opacity" data-address-key="${addressKey}" title="Click to cycle status">
-                    <td class="p-4">
-                        <div class="p-3 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all">
-                            <div class="text-sm font-bold">${safeAddress}</div>
-                            <div class="text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1">${safeCityText}, MD ${safeZipText}</div>
+                <tr class=\"${isDone ? 'line-through text-gray-400' : ''} cursor-pointer hover:opacity-80 transition-opacity\" data-address-key=\"${addressKey}\" title=\"Click to cycle status\">
+                    <td class=\"p-4\">
+                        <div class=\"p-3 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all\">
+                            <div class=\"text-sm font-bold\">${safeAddress}</div>
+                            <div class=\"text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1\">${safeCityText}, MD ${safeZipText}</div>
                             ${statusIndicator}
                         </div>
                     </td>
-                    <td class="p-4">
-                        <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}">
+                    <td class=\"p-4\">
+                        <span class=\"px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}\">
                             ${item.occupancy}
                         </span>
                     </td>
-                    <td class="p-4 text-right">
-                        <a href="${item.sdat_url}" target="_blank" class="text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}">
+                    <td class=\"p-4 text-right\">
+                        <a href=\"${item.sdat_url}\" target=\"_blank\" class=\"text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}\">
                             ProLookup LINK
                         </a>
                     </td>
@@ -448,24 +464,24 @@ function renderResults(groups) {
         }).join('');
 
         return `
-            <div class="mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}">
-                <div class="bg-gray-50 px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4">
-                    <div class="flex items-center gap-3">
-                        <span class="bg-cardinal text-white text-[10px] font-black px-2 py-1 rounded uppercase tracking-tighter">Group ${gIdx + 1}</span>
-                        <h3 class="text-sm font-bold text-gray-800 ${isDone ? 'line-through' : ''}">${group.items.length} Properties</h3>
+            <div class=\"mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}\">
+                <div class=\"bg-gray-50 px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4\">
+                    <div class=\"flex items-center gap-3\">
+                        <span class=\"bg-cardinal text-white text-[10px] font-black px-2 py-1 rounded uppercase tracking-tighter\">Group ${gIdx + 1}</span>
+                        <h3 class=\"text-sm font-bold text-gray-800 ${isDone ? 'line-through' : ''}\">${group.items.length} Properties</h3>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <button onclick="shareGroup(${gIdx})" class="bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}">
+                    <div class=\"flex items-center gap-2\">
+                        <button onclick=\"shareGroup(${gIdx})\" class=\"bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}\">
                             Share Group
                         </button>
-                        <button onclick="toggleGroupComplete(${gIdx})" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}">
+                        <button onclick=\"toggleGroupComplete(${gIdx})\" class=\"px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${isDone ? 'bg-gray-800 text-white' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}\">
                             ${isDone ? 'Undo' : 'Complete'}
                         </button>
                     </div>
                 </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse">
-                        <tbody class="divide-y divide-gray-100">${itemsHtml}</tbody>
+                <div class=\"overflow-x-auto\">
+                    <table class=\"w-full text-left border-collapse\">
+                        <tbody class=\"divide-y divide-gray-100\">${itemsHtml}</tbody>
                     </table>
                 </div>
             </div>
@@ -722,7 +738,7 @@ async function loadHistory() {
     if (!currentUser || currentUser.isAnonymous) return;
 
     const tableBody = document.getElementById("db-table-body");
-    tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-400 italic">Loading history...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan=\"3\" class=\"p-4 text-center text-gray-400 italic\">Loading history...</td></tr>';
 
     try {
         const querySnapshot = await getDocs(getCollectionRef(currentDbSubTab));
@@ -731,13 +747,13 @@ async function loadHistory() {
         batches.sort((a, b) => b.timestamp - a.timestamp);
 
         if (batches.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-gray-500">No ${currentDbSubTab} batches found.</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan=\"3\" class=\"p-4 text-center text-gray-500\">No ${currentDbSubTab} batches found.</td></tr>`;
             return;
         }
 
         const batchesHtml = batches.map(batch => {
             const creatorLine = currentDbSubTab === 'public'
-                ? `<div class="text-[10px] text-gray-400 font-bold uppercase mt-1">Shared by: ${batch.createdBy || 'Unknown'}</div>`
+                ? `<div class=\"text-[10px] text-gray-400 font-bold uppercase mt-1\">Shared by: ${batch.createdBy || 'Unknown'}</div>`
                 : '';
             
             window[`batchData_${batch.id}`] = { 
@@ -749,19 +765,19 @@ async function loadHistory() {
 
             return `
                 <tr>
-                    <td class="px-6 py-4">
-                        <div class="font-bold text-gray-800">${batch.name}</div>
-                        <div class="text-[10px] text-gray-400">${new Date(batch.timestamp).toLocaleString()}</div>
+                    <td class=\"px-6 py-4\">
+                        <div class=\"font-bold text-gray-800\">${batch.name}</div>
+                        <div class=\"text-[10px] text-gray-400\">${new Date(batch.timestamp).toLocaleString()}</div>
                     </td>
-                    <td class="px-6 py-4">
-                        <div class="text-xs text-gray-600">${normalizeBatchData(batch.data).length} Groups</div>
+                    <td class=\"px-6 py-4\">
+                        <div class=\"text-xs text-gray-600\">${normalizeBatchData(batch.data).length} Groups</div>
                         ${creatorLine}
                     </td>
-                    <td class="px-6 py-4 text-right">
-                        <div class="flex justify-end gap-3 items-center">
-                            <button onclick="window.viewBatch('${batch.id}', '${currentDbSubTab}')" class="text-cardinal font-black hover:underline text-[10px] uppercase">View</button>
-                            <button onclick="window.requestDeleteBatch('${batch.id}', '${currentDbSubTab}')" class="text-gray-300 hover:text-red-600 transition-colors">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    <td class=\"px-6 py-4 text-right\">
+                        <div class=\"flex justify-end gap-3 items-center\">
+                            <button onclick=\"window.viewBatch('${batch.id}', '${currentDbSubTab}')\" class=\"text-cardinal font-black hover:underline text-[10px] uppercase\">View</button>
+                            <button onclick=\"window.requestDeleteBatch('${batch.id}', '${currentDbSubTab}')\" class=\"text-gray-300 hover:text-red-600 transition-colors\">
+                                <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16\"></path></svg>
                             </button>
                         </div>
                     </td>
@@ -773,7 +789,7 @@ async function loadHistory() {
 
     } catch (error) {
         console.error("Load History Error: ", error);
-        tableBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-red-500">Error loading history</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan=\"3\" class=\"p-4 text-center text-red-500\">Error loading history</td></tr>';
     }
 }
 
@@ -906,6 +922,20 @@ window.switchDbSubTab = function(subtab) {
         privateBtn.className = "font-bold text-sm pb-2 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-all";
     }
     loadHistory();
+};
+
+window.handleCountyChange = function(selectedCounty) {
+    currentCounty = selectedCounty;
+    console.log("County switched to:", currentCounty);
+    // If there's a batch currently displayed, re-render it for the new county
+    if (groupedBatch.length > 0) {
+        renderResults(groupedBatch); 
+        showToast(`Switched to ${getCountyInfo(currentCounty).name}`);
+    } else {
+        showToast(`Selected ${getCountyInfo(currentCounty).name}`);
+    }
+    // You might also want to clear the input or trigger a new lookup here
+    // For now, it just updates the currentCounty and re-renders if a batch is present.
 };
 
 function startProgressModal(total) {
