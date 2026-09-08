@@ -38,7 +38,6 @@ jobs:
 
       - name: Install dependencies for cardinal-app
         run: |
-          cd cardinal-app
           npm install
 
       - name: Build cardinal-app
