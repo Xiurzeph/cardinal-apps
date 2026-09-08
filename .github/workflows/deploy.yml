@@ -42,7 +42,6 @@ jobs:
 
       - name: Build cardinal-app
         run: |
-          cd cardinal-app
           npm run build
 
       - name: Deploy to GitHub Pages
