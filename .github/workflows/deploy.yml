@@ -53,7 +53,7 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' }} # Only deploy from main branch
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./cardinal-app/dist # This specifies the directory to publish
+          publish_dir: ./dist # This specifies the directory to publish
           publish_branch: gh-pages # This is the branch GitHub Pages uses
           # The cname option is not needed if your GitHub Pages URL is like username.github.io/repo-name
           # cname: example.com # Uncomment if you use a custom domain
