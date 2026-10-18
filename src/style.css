@@ -15,6 +15,10 @@
   @apply visible opacity-100;
 }
 
+.print-status {
+  display: none;
+}
+
 /* Print Styles */
 @media print {
   .no-print {
@@ -25,6 +29,20 @@
     box-shadow: none !important;
     margin: 0 !important;
     padding: 0 !important;
+  }
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
+  .print-group {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+  }
+  .print-status {
+    display: block !important;
+    margin-top: 4px;
+    font-size: 9pt;
+    font-weight: 600;
   }
   body, #app-content, main {
     height: auto !important;

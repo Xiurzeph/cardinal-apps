@@ -31,6 +31,7 @@ let currentBatchSource = 'private'; // 'private' or 'public'
 let pendingAction = null; 
 let groupedBatch = []; 
 let streetNumberFilter = 'all';
+let printAllResults = false;
 let currentTab = 'formatter';
 let currentDbSubTab = 'private'; // Sub-navigation inside history tab
 let activeShareText = ''; // Temporarily stores text generated for active sharing instance
@@ -82,11 +83,30 @@ function escapeHtml(value) {
 function matchesStreetNumberFilter(address, filter) {
     if (filter === 'all') return true;
 
-    const match = String(address ?? '').match(/^\s*(\d+)/);
-    if (!match) return false;
+    const streetNumber = getStreetNumber(address);
+    if (streetNumber === null) return false;
 
-    const isOdd = Number(match[1]) % 2 === 1;
+    const isOdd = streetNumber % 2 === 1;
     return filter === 'odd' ? isOdd : !isOdd;
+}
+
+function getStreetNumber(address) {
+    const match = String(address ?? '').match(/^\s*(\d+)/);
+    return match ? Number(match[1]) : null;
+}
+
+function setLookupSummary({ found, noMatch, errors, filtered, skipped, total }) {
+    document.getElementById('lookupSummaryTotal').textContent = `${total} input addresses`;
+    document.getElementById('lookupSummaryFound').textContent = found;
+    document.getElementById('lookupSummaryNoMatch').textContent = noMatch;
+    document.getElementById('lookupSummaryErrors').textContent = errors;
+    document.getElementById('lookupSummaryFiltered').textContent = filtered;
+    document.getElementById('lookupSummarySkipped').textContent = skipped;
+    document.getElementById('lookupSummary').classList.remove('hidden');
+}
+
+function hideLookupSummary() {
+    document.getElementById('lookupSummary').classList.add('hidden');
 }
 
 function getStatusStyle(status) {
@@ -282,24 +302,36 @@ async function runLookupAndFormat() {
     const ownerOccupiedOnly = document.getElementById('chkOwnerOccupied').checked;
     
     if (!input.trim()) return window.showToast("Please enter at least one address.", "error");
+    hideLookupSummary();
     
     const lines = input.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     const validAddresses = [];
+    let skippedCount = 0;
     
     for (let line of lines) {
-        if (line.toLowerCase().includes("do not call")) continue;
+        if (line.toLowerCase().includes("do not call")) {
+            skippedCount++;
+            continue;
+        }
         let cleanAddr = line.split(/Default|Never visited|\d{2}\/\d{2}\/\d{4}|R-\d+/i)[0].trim();
         cleanAddr = cleanAddr.replace(/^(\d+)([a-zA-Z])/, '$1 $2');
         if (cleanAddr) validAddresses.push({ original: line, cleaned: cleanAddr });
+        else skippedCount++;
     }
 
-    if (validAddresses.length === 0) return window.showToast("No valid addresses found.", "error");
+    if (validAddresses.length === 0) {
+        setLookupSummary({ found: 0, noMatch: 0, errors: 0, filtered: 0, skipped: skippedCount, total: lines.length });
+        return window.showToast("No valid addresses found.", "error");
+    }
 
     startProgressModal(validAddresses.length);
     const results = [];
     currentBatchId = null;
     addressStatuses.clear(); // Clear previous status mappings for new lookup
     let cachedHits = 0;
+    let noMatchCount = 0;
+    let lookupErrorCount = 0;
+    let ownerOccupiedFilteredCount = 0;
     
     for (let i = 0; i < validAddresses.length; i++) {
         const item = validAddresses[i];
@@ -329,21 +361,32 @@ async function runLookupAndFormat() {
                         occupancy: isOwnerOcc ? "Owner" : "Rental/Other",
                         sdat_url: result.sdat_url
                     });
+                } else {
+                    ownerOccupiedFilteredCount++;
                 }
+            } else {
+                noMatchCount++;
             }
-        } catch (err) { console.error(err); }
+        } catch (err) {
+            lookupErrorCount++;
+        }
     }
 
     groupedBatch = chunkArray(results, 5);
     streetNumberFilter = 'all';
     window.renderResults(groupedBatch);
     hideProgressModal();
+    setLookupSummary({
+        found: results.length,
+        noMatch: noMatchCount,
+        errors: lookupErrorCount,
+        filtered: ownerOccupiedFilteredCount,
+        skipped: skippedCount,
+        total: lines.length
+    });
     
-    if (cachedHits > 0) {
-        window.showToast(`Found ${results.length} properties in ${groupedBatch.length} groups (${cachedHits} served from speed cache).`);
-    } else {
-        window.showToast(`Found ${results.length} properties in ${groupedBatch.length} groups.`);
-    }
+    const cacheMessage = cachedHits > 0 ? ` (${cachedHits} served from speed cache)` : '';
+    window.showToast(`Found ${results.length} properties in ${groupedBatch.length} groups${cacheMessage}.`);
 }
 
 /**
@@ -365,7 +408,9 @@ async function fetchPropertyData(addressStr) {
         });
 
         const geoRes = await fetch(`${MD_LOCATOR_URL}?${geocodeParams}`);
+        if (!geoRes.ok) throw new Error(`Geocoder request failed (${geoRes.status})`);
         const geoData = await geoRes.json();
+        if (geoData.error) throw new Error(geoData.error.message || 'Geocoder returned an error');
         
         // Default to the user's raw input if the geocoder fails us
         let standardizedBase = addressStr.toUpperCase();
@@ -410,7 +455,9 @@ async function fetchPropertyData(addressStr) {
         });
 
         const propRes = await fetch(`${MD_GEODATA_URL}?${queryParams}`);
+        if (!propRes.ok) throw new Error(`Property data request failed (${propRes.status})`);
         const propData = await propRes.json();
+        if (propData.error) throw new Error(propData.error.message || 'Property data service returned an error');
 
         if (propData.features && propData.features.length > 0) {
             const attr = propData.features[0].attributes;
@@ -423,8 +470,9 @@ async function fetchPropertyData(addressStr) {
                 sdat_url: `https://www.marylandgov.us/property?address=${encodeURIComponent(attr.ADDRESS)}`
             };
         }
-    } catch (e) { 
-        console.error("Lookup Error: ", e); 
+    } catch (e) {
+        console.error("Lookup Error: ", e);
+        throw e;
     }
     return null;
 }
@@ -440,31 +488,51 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
         return;
     }
 
+    const activeFilter = printAllResults ? 'all' : streetNumberFilter;
     const totalProperties = groups.reduce((total, group) => total + group.items.length, 0);
     const visibleProperties = groups.reduce(
-        (total, group) => total + group.items.filter(item => matchesStreetNumberFilter(item.full_address, streetNumberFilter)).length,
+        (total, group) => total + group.items.filter(item => matchesStreetNumberFilter(item.full_address, activeFilter)).length,
         0
     );
+    const unclassifiedProperties = groups.reduce(
+        (total, group) => total + group.items.filter(item => getStreetNumber(item.full_address) === null).length,
+        0
+    );
+    const statusCounts = groups.flatMap(group => group.items).reduce((counts, item) => {
+        const status = addressStatuses.get(getAddressKey(item.full_address, item.city, item.zip)) || 'choose status';
+        if (status === 'choose status') counts.needsStatus++;
+        if (status === 'visited') counts.visited++;
+        if (status === 'do not call' || status === 'no soliciting' || status === 'not trespassing') counts.doNotContact++;
+        return counts;
+    }, { needsStatus: 0, visited: 0, doNotContact: 0 });
     const filterToolbar = `
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-            <div>
-                <h2 class="text-xs font-black uppercase tracking-wide text-gray-700">Street number filter</h2>
-                <p class="text-[10px] text-gray-500">${visibleProperties} of ${totalProperties} properties across all groups</p>
+        <div class="no-print mb-4 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <div>
+                    <h2 class="text-xs font-black uppercase tracking-wide text-gray-700">Street number filter</h2>
+                    <p class="text-[11px] text-gray-500">${visibleProperties} of ${totalProperties} properties across all groups${activeFilter !== 'all' ? ` · ${unclassifiedProperties} without a leading street number` : ''}</p>
+                </div>
+                <div class="flex items-center gap-1 rounded-lg bg-gray-100 p-1" role="group" aria-label="Filter all groups by street number">
+                    ${['all', 'odd', 'even'].map(filter => `
+                        <button type="button" onclick="window.setStreetNumberFilter('${filter}')" aria-pressed="${activeFilter === filter}" class="min-h-10 min-w-14 rounded-md px-3 text-xs font-bold uppercase transition-all ${activeFilter === filter ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-600 hover:bg-white'}">
+                            ${filter === 'all' ? 'All' : filter}
+                        </button>
+                    `).join('')}
+                </div>
             </div>
-            <div class="flex items-center gap-1 rounded-lg bg-gray-100 p-1" role="group" aria-label="Filter all groups by street number">
-                ${['all', 'odd', 'even'].map(filter => `
-                    <button type="button" onclick="window.setStreetNumberFilter('${filter}')" aria-pressed="${streetNumberFilter === filter}" class="px-3 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${streetNumberFilter === filter ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-500 hover:bg-white'}">
-                        ${filter === 'all' ? 'All' : filter}
-                    </button>
-                `).join('')}
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs shadow-sm" aria-label="Status summary">
+                <span class="font-black uppercase tracking-wide text-gray-500">Status</span>
+                <span><strong class="text-amber-700">${statusCounts.needsStatus}</strong> need status</span>
+                <span><strong class="text-teal-700">${statusCounts.visited}</strong> visited</span>
+                <span><strong class="text-red-700">${statusCounts.doNotContact}</strong> do not contact</span>
             </div>
         </div>
     `;
 
     const html = groups.map((group, gIdx) => {
         const isDone = group.completed;
-        const visibleItems = group.items.filter(item => matchesStreetNumberFilter(item.full_address, streetNumberFilter));
-        const propertyCount = streetNumberFilter === 'all'
+        const visibleItems = group.items.filter(item => matchesStreetNumberFilter(item.full_address, activeFilter));
+        const propertyCount = activeFilter === 'all'
             ? `${group.items.length} Properties`
             : `${visibleItems.length} of ${group.items.length} Properties`;
 
@@ -489,9 +557,10 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
                         <div class=\"p-2 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all\">
                             <div class=\"text-sm font-bold\">${safeAddress}</div>
                             <div class=\"text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1\">${safeCityText}, MD ${safeZipText}</div>
-                            <select data-address-status data-full-address="${safeAddress}" data-city="${safeCityText}" data-zip="${safeZipText}" aria-label="Set status for ${safeAddress}" class="mt-1 max-w-full rounded border border-gray-300 bg-white px-2 py-1 text-[10px] font-bold text-gray-700">
+                            <select data-address-status data-full-address="${safeAddress}" data-city="${safeCityText}" data-zip="${safeZipText}" aria-label="Set status for ${safeAddress}" class="no-print mt-2 h-10 w-full max-w-xs rounded border border-gray-300 bg-white px-3 text-xs font-bold text-gray-700">
                                 ${statusOptions}
                             </select>
+                            <span class="print-status">${escapeHtml(status === 'choose status' ? 'Choose Status' : getStatusStyle(status).indicator || 'Home')}</span>
                         </div>
                     </td>
                     <td class=\"p-2\">
@@ -508,11 +577,11 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
             `;
         }).join('');
         const emptyFilterMessage = visibleItems.length === 0
-            ? `<tr><td colspan=\"3\" class=\"p-3 text-center text-xs text-gray-400\">No ${streetNumberFilter} street numbers in this group.</td></tr>`
+            ? `<tr><td colspan=\"3\" class=\"p-3 text-center text-xs text-gray-400\">No ${activeFilter} street numbers in this group.</td></tr>`
             : '';
 
         return `
-            <div class=\"mb-6 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}\">
+            <div class=\"print-group mb-6 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}\">
                 <div class=\"bg-gray-50 px-4 py-3 border-b flex flex-wrap items-center justify-between gap-3\">
                     <div class=\"flex items-center gap-3\">
                         <span class=\"bg-cardinal text-white text-[10px] font-black px-2 py-1 rounded uppercase tracking-tighter\">Group ${gIdx + 1}</span>
@@ -564,6 +633,29 @@ window.setStreetNumberFilter = function(filter) {
     streetNumberFilter = filter;
     window.renderResults(groupedBatch);
 };
+
+window.printResults = function(scope) {
+    if (!['visible', 'all'].includes(scope)) return;
+    if (groupedBatch.length === 0) return window.showToast('No results to print', 'error');
+
+    printAllResults = scope === 'all';
+    window.renderResults(groupedBatch);
+    try {
+        window.print();
+    } catch (error) {
+        printAllResults = false;
+        window.renderResults(groupedBatch);
+        console.error('Print failed:', error);
+        window.showToast('Print failed', 'error');
+    }
+};
+
+window.addEventListener('afterprint', () => {
+    if (!printAllResults) return;
+
+    printAllResults = false;
+    window.renderResults(groupedBatch);
+});
 
 /**
  * Share Group triggers the brand new integrated Share Service Panel
@@ -847,6 +939,7 @@ async function loadHistory() {
 window.viewBatch = function(batchId, source = 'private') {
     const entry = window[`batchData_${batchId}`];
     if (entry) {
+        hideLookupSummary();
         groupedBatch = normalizeBatchData(entry.data);
         streetNumberFilter = 'all';
         currentBatchId = entry.id;
