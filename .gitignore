@@ -18,6 +18,8 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
 
 # Editor directories
 .vscode/
