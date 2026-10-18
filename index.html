@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cardinal Address Lookup</title>
 <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
-  <script type="module" crossorigin src="./assets/index-CVLRtrno.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DvqE-OLh.css">
+  <script type="module" crossorigin src="./assets/index-CEMYvKFw.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CCYJrbVv.css">
 </head>
 <body class="bg-gray-50 font-sans text-gray-900 h-screen flex flex-col relative">
 <div id="toast-container" class="fixed bottom-6 right-6 z-[200] flex flex-col items-end"></div>
@@ -59,25 +59,25 @@
 <label for="csvInput" class="mb-2 block text-xs font-black uppercase tracking-wide text-gray-700">Property addresses</label>
 <textarea id="csvInput" class="w-full h-32 p-4 bg-gray-50 border border-gray-200 text-gray-800 rounded-lg font-mono text-sm focus:ring-2 focus:ring-cardinal/20 focus:border-cardinal outline-none mb-2 transition-all" placeholder="One address per line, e.g.&#10;123 Main St&#10;456 Oak Ave"></textarea>
 <p class="mb-4 text-xs text-gray-500">Paste one street address per line. Spreadsheet rows are supported; entries marked “Do Not Call” are skipped.</p>
-<div class="flex flex-col sm:flex-row justify-between items-center gap-4">
-<div class="flex flex-wrap gap-3">
-<button onclick="window.runLookupAndFormat()" class="px-6 py-2.5 bg-cardinal text-white rounded-lg font-bold shadow-lg shadow-red-900/20 hover:bg-red-800 transition-all flex items-center justify-center gap-2">
-<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+<div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+<div class="flex flex-wrap items-center gap-2">
+<button onclick="window.runLookupAndFormat()" class="px-4 py-2 bg-cardinal text-white rounded-lg text-sm font-bold shadow-sm shadow-red-900/20 hover:bg-red-800 transition-all flex items-center justify-center gap-1.5">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
 <span>Fetch</span>
 </button>
-<div id="btn-save-container" class="hidden">
-<button onclick="window.saveOrUpdateBatch()" class="px-6 py-2.5 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20">
-<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+<div id="btn-save-container" class="hidden flex flex-wrap items-center gap-2">
+<button onclick="window.saveOrUpdateBatch()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-all flex items-center justify-center gap-1.5 shadow-sm shadow-emerald-900/20">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
 <span id="btn-save-text">Save</span>
 </button>
-<button id="btn-toggle-batch-sharing" onclick="window.switchBatchSharing()" class="hidden ml-2 px-4 py-2.5 bg-white border border-blue-200 text-blue-700 rounded-lg font-bold hover:bg-blue-50 transition-all text-sm"></button>
+<button id="btn-toggle-batch-sharing" onclick="window.switchBatchSharing()" class="hidden px-3 py-2 bg-white border border-blue-200 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-50 transition-all"></button>
 </div>
-<button onclick="window.printResults('visible')" class="px-4 py-2.5 bg-gray-800 text-white rounded-lg font-bold hover:bg-gray-900 transition-all flex items-center justify-center gap-2 shadow-lg">
-<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+<button onclick="window.printResults('visible')" class="px-3 py-2 bg-gray-800 text-white rounded-lg text-sm font-bold hover:bg-gray-900 transition-all flex items-center justify-center gap-1.5 shadow-sm">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
 <span>Print</span>
 </button>
 </div>
-<div class="flex flex-wrap items-center gap-3 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
+<div class="flex flex-wrap items-center gap-2 bg-gray-50 px-3 py-2 rounded-lg border border-gray-200">
 <!-- County Switcher -->
 <div class="relative">
 <label for="countySelect" class="sr-only">Select County:</label>
