@@ -5,7 +5,7 @@
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, addDoc, getDocs, updateDoc, doc, deleteDoc, serverTimestamp } from "firebase/firestore";
+import { getFirestore, collection, addDoc, getDocs, updateDoc, doc, deleteDoc, serverTimestamp, FieldPath } from "firebase/firestore";
 
 import './style.css'; 
 
@@ -30,7 +30,7 @@ let currentBatchId = null;
 let currentBatchSource = 'private'; // 'private' or 'public'
 let pendingAction = null; 
 let groupedBatch = []; 
-const groupStreetNumberFilters = new Map();
+let streetNumberFilter = 'all';
 let currentTab = 'formatter';
 let currentDbSubTab = 'private'; // Sub-navigation inside history tab
 let activeShareText = ''; // Temporarily stores text generated for active sharing instance
@@ -47,6 +47,7 @@ let addressStatusSaveHandle = null;
 let addressStatusSaveTimeout = null;
 const ADDRESS_STATUS_SAVE_IDLE_MS = 2000;
 const ADDRESS_STATUS_SAVE_FALLBACK_MS = 1000;
+let addressStatusSyncPending = false;
 // Track last-synced statuses to send only deltas
 const lastSyncedStatuses = new Map();
 let addressStatusSyncInProgress = false;
@@ -116,6 +117,10 @@ function getStatusStyle(status) {
 
 function scheduleAddressStatusSync() {
     if (!currentBatchId) return;
+    if (addressStatusSyncInProgress) {
+        addressStatusSyncPending = true;
+        return;
+    }
 
     if (addressStatusSaveHandle) {
         if ('cancelIdleCallback' in window) {
@@ -132,38 +137,39 @@ function scheduleAddressStatusSync() {
         addressStatusSaveHandle = null;
         addressStatusSaveTimeout = null;
 
-        if (addressStatusSyncInProgress) return;
+        if (addressStatusSyncInProgress) {
+            addressStatusSyncPending = true;
+            return;
+        }
         addressStatusSyncInProgress = true;
+        addressStatusSyncPending = false;
 
         try {
             // Compute delta between current statuses and lastSyncedStatuses
-            const delta = {};
+            const changedStatuses = [];
             for (const [key, val] of addressStatuses.entries()) {
                 const last = lastSyncedStatuses.get(key);
                 if (last !== val) {
-                    // Use dot path to update only this map entry on the document
-                    const fieldPath = `addressStatuses.${key}`;
-                    delta[fieldPath] = val;
+                    changedStatuses.push([key, val]);
                 }
             }
 
-            if (Object.keys(delta).length === 0) {
-                addressStatusSyncInProgress = false;
-                return;
-            }
-
-            // add a timestamp for visibility
-            delta['meta.lastStatusSync'] = serverTimestamp();
+            if (changedStatuses.length === 0) return;
 
             const batchRef = doc(getCollectionRef(currentBatchSource), currentBatchId);
-            await updateDoc(batchRef, delta);
+            const updates = changedStatuses.flatMap(([key, value]) => [
+                new FieldPath('addressStatuses', key),
+                value
+            ]);
+            updates.push(
+                new FieldPath('meta', 'lastStatusSync'),
+                serverTimestamp()
+            );
+            await updateDoc(batchRef, ...updates);
 
             // update lastSyncedStatuses
-            for (const k of Object.keys(delta)) {
-                if (k.startsWith('addressStatuses.')) {
-                    const keyName = k.replace('addressStatuses.', '');
-                    lastSyncedStatuses.set(keyName, delta[k]);
-                }
+            for (const [key, value] of changedStatuses) {
+                lastSyncedStatuses.set(key, value);
             }
 
             window.showToast('Batch status synced', 'success');
@@ -172,6 +178,7 @@ function scheduleAddressStatusSync() {
             window.showToast('Status sync failed', 'error');
         } finally {
             addressStatusSyncInProgress = false;
+            if (addressStatusSyncPending) scheduleAddressStatusSync();
         }
     };
 
@@ -182,23 +189,16 @@ function scheduleAddressStatusSync() {
     }
 }
 
-window.cycleAddressStatus = function(full_address, city, zip, event) {
-    event.stopPropagation();
+window.setAddressStatus = function(full_address, city, zip, newStatus) {
+    if (!ADDRESS_STATUSES.includes(newStatus)) {
+        window.showToast('Invalid address status', 'error');
+        return;
+    }
+
     const key = getAddressKey(full_address, city, zip);
-    const currentStatus = addressStatuses.get(key) || 'home';
-    const currentIndex = ADDRESS_STATUSES.indexOf(currentStatus);
-    const nextIndex = (currentIndex + 1) % ADDRESS_STATUSES.length;
-    const newStatus = ADDRESS_STATUSES[nextIndex];
-    
     addressStatuses.set(key, newStatus);
-    
-    // Re-render the results to show updated status
     window.renderResults(groupedBatch);
-    
-    // Schedule an async sync call to update the saved batch without overwhelming Firestore
     scheduleAddressStatusSync();
-    
-    // Show toast notification
     window.showToast(`${full_address} → ${newStatus}`);
 };
 
@@ -332,7 +332,7 @@ async function runLookupAndFormat() {
     }
 
     groupedBatch = chunkArray(results, 5);
-    groupStreetNumberFilters.clear();
+    streetNumberFilter = 'all';
     window.renderResults(groupedBatch);
     hideProgressModal();
     
@@ -437,11 +437,31 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
         return;
     }
 
+    const totalProperties = groups.reduce((total, group) => total + group.items.length, 0);
+    const visibleProperties = groups.reduce(
+        (total, group) => total + group.items.filter(item => matchesStreetNumberFilter(item.full_address, streetNumberFilter)).length,
+        0
+    );
+    const filterToolbar = `
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+            <div>
+                <h2 class="text-xs font-black uppercase tracking-wide text-gray-700">Street number filter</h2>
+                <p class="text-[10px] text-gray-500">${visibleProperties} of ${totalProperties} properties across all groups</p>
+            </div>
+            <div class="flex items-center gap-1 rounded-lg bg-gray-100 p-1" role="group" aria-label="Filter all groups by street number">
+                ${['all', 'odd', 'even'].map(filter => `
+                    <button type="button" onclick="window.setStreetNumberFilter('${filter}')" aria-pressed="${streetNumberFilter === filter}" class="px-3 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${streetNumberFilter === filter ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-500 hover:bg-white'}">
+                        ${filter === 'all' ? 'All' : filter}
+                    </button>
+                `).join('')}
+            </div>
+        </div>
+    `;
+
     const html = groups.map((group, gIdx) => {
         const isDone = group.completed;
-        const activeFilter = groupStreetNumberFilters.get(gIdx) || 'all';
-        const visibleItems = group.items.filter(item => matchesStreetNumberFilter(item.full_address, activeFilter));
-        const propertyCount = activeFilter === 'all'
+        const visibleItems = group.items.filter(item => matchesStreetNumberFilter(item.full_address, streetNumberFilter));
+        const propertyCount = streetNumberFilter === 'all'
             ? `${group.items.length} Properties`
             : `${visibleItems.length} of ${group.items.length} Properties`;
 
@@ -450,21 +470,23 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
             const status = addressStatuses.get(key) || 'home';
             const styleInfo = getStatusStyle(status);
 
-            const statusIndicator = status !== 'home' 
-                ? `<div class=\"text-[9px] font-bold uppercase mt-1 opacity-75\">${styleInfo.indicator}</div>`
-                : '';
             const safeAddress = escapeHtml(item.full_address);
             const safeCityText = escapeHtml(item.city);
             const safeZipText = escapeHtml(item.zip);
-            const addressKey = escapeHtml(getAddressKey(item.full_address, item.city, item.zip));
+            const statusOptions = ADDRESS_STATUSES.map(statusOption => {
+                const label = getStatusStyle(statusOption).indicator || '🏠 Home';
+                return `<option value="${escapeHtml(statusOption)}" ${statusOption === status ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+            }).join('');
 
             return `
-                <tr class=\"${isDone ? 'line-through text-gray-400' : ''} cursor-pointer hover:opacity-80 transition-opacity\" data-address-key=\"${addressKey}\" title=\"Click to cycle status\">
+                <tr class=\"${isDone ? 'line-through text-gray-400' : ''} hover:opacity-90 transition-opacity\">
                     <td class=\"p-2\">
                         <div class=\"p-2 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all\">
                             <div class=\"text-sm font-bold\">${safeAddress}</div>
                             <div class=\"text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1\">${safeCityText}, MD ${safeZipText}</div>
-                            ${statusIndicator}
+                            <select data-address-status data-full-address="${safeAddress}" data-city="${safeCityText}" data-zip="${safeZipText}" aria-label="Set status for ${safeAddress}" class="mt-1 max-w-full rounded border border-gray-300 bg-white px-2 py-1 text-[10px] font-bold text-gray-700">
+                                ${statusOptions}
+                            </select>
                         </div>
                     </td>
                     <td class=\"p-2\">
@@ -481,7 +503,7 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
             `;
         }).join('');
         const emptyFilterMessage = visibleItems.length === 0
-            ? `<tr><td colspan=\"3\" class=\"p-3 text-center text-xs text-gray-400\">No ${activeFilter} street numbers in this group.</td></tr>`
+            ? `<tr><td colspan=\"3\" class=\"p-3 text-center text-xs text-gray-400\">No ${streetNumberFilter} street numbers in this group.</td></tr>`
             : '';
 
         return `
@@ -492,13 +514,6 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
                         <h3 class=\"text-sm font-bold text-gray-800 ${isDone ? 'line-through' : ''}\">${propertyCount}</h3>
                     </div>
                     <div class=\"flex flex-wrap items-center gap-2\">
-                        <div class=\"flex items-center gap-1 rounded-lg bg-white p-1\" role=\"group\" aria-label=\"Filter group ${gIdx + 1} by street number\">
-                            ${['all', 'odd', 'even'].map(filter => `
-                                <button type=\"button\" onclick=\"window.setGroupStreetNumberFilter(${gIdx}, '${filter}')\" aria-pressed=\"${activeFilter === filter}\" class=\"px-2 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${activeFilter === filter ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-100'}\">
-                                    ${filter === 'all' ? 'All' : filter}
-                                </button>
-                            `).join('')}
-                        </div>
                         <button onclick=\"window.shareGroup(${gIdx})\" class=\"bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}\">
                             Share Group
                         </button>
@@ -516,20 +531,16 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
         `;
     }).join('');
 
-    canvas.innerHTML = html;
+    canvas.innerHTML = filterToolbar + html;
 
-    canvas.querySelectorAll('tr[data-address-key]').forEach((row) => {
-        row.addEventListener('click', (event) => {
-            const addressKey = row.getAttribute('data-address-key');
-            if (!addressKey) return;
-            const [full_address, city, zip] = addressKey.split('|');
-            window.cycleAddressStatus(full_address, city, zip, event);
-        });
-
-        row.querySelectorAll('a').forEach((link) => {
-            link.addEventListener('click', (event) => {
-                event.stopPropagation();
-            });
+    canvas.querySelectorAll('select[data-address-status]').forEach((select) => {
+        select.addEventListener('change', () => {
+            window.setAddressStatus(
+                select.dataset.fullAddress,
+                select.dataset.city,
+                select.dataset.zip,
+                select.value
+            );
         });
     });
     
@@ -542,10 +553,10 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
     }
 };
 
-window.setGroupStreetNumberFilter = function(idx, filter) {
-    if (!groupedBatch[idx] || !['all', 'odd', 'even'].includes(filter)) return;
+window.setStreetNumberFilter = function(filter) {
+    if (!['all', 'odd', 'even'].includes(filter)) return;
 
-    groupStreetNumberFilters.set(idx, filter);
+    streetNumberFilter = filter;
     window.renderResults(groupedBatch);
 };
 
@@ -832,7 +843,7 @@ window.viewBatch = function(batchId, source = 'private') {
     const entry = window[`batchData_${batchId}`];
     if (entry) {
         groupedBatch = normalizeBatchData(entry.data);
-        groupStreetNumberFilters.clear();
+        streetNumberFilter = 'all';
         currentBatchId = entry.id;
         currentBatchSource = source || entry.source || 'private';
         
