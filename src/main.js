@@ -5,7 +5,7 @@
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, addDoc, getDocs, updateDoc, doc, deleteDoc, serverTimestamp, FieldPath } from "firebase/firestore";
+import { getFirestore, collection, addDoc, getDocs, updateDoc, doc, deleteDoc, runTransaction, serverTimestamp, FieldPath } from "firebase/firestore";
 
 import './style.css'; 
 
@@ -335,7 +335,7 @@ async function runLookupAndFormat() {
     
     for (let i = 0; i < validAddresses.length; i++) {
         const item = validAddresses[i];
-        const cacheKey = item.cleaned.toUpperCase().trim();
+        const cacheKey = `${window.currentCounty}:${item.cleaned.toUpperCase().trim()}`;
         updateProgress(i + 1, validAddresses.length, item.cleaned);
         
         try {
@@ -467,7 +467,7 @@ async function fetchPropertyData(addressStr) {
                 zip: attr.ZIPCODE || '',
                 raw_ooi: attr.OOI, 
                 // Always construct the direct clickable URL pointing to the marylandgov.us portal
-                sdat_url: `https://www.marylandgov.us/property?address=${encodeURIComponent(attr.ADDRESS)}`
+                sdat_url: attr.SDATWEBADR || null
             };
         }
     } catch (e) {
@@ -480,11 +480,19 @@ async function fetchPropertyData(addressStr) {
 window.renderResults = function(groups) { // Expose to window for handleCountyChange
     const canvas = document.getElementById('outputCanvas');
     const saveContainer = document.getElementById('btn-save-container');
+    const sharingButton = document.getElementById('btn-toggle-batch-sharing');
     const countyInfo = window.getCountyInfo(window.currentCounty); // Get county info for rendering
+
+    if (saveContainer) {
+        saveContainer.classList.toggle('hidden', groups.length === 0 || !currentUser || currentUser.isAnonymous);
+    }
+    if (sharingButton) {
+        sharingButton.classList.toggle('hidden', groups.length === 0 || !currentBatchId || !currentUser || currentUser.isAnonymous);
+        sharingButton.textContent = currentBatchSource === 'public' ? 'Make Private' : 'Move to Team Shared';
+    }
 
     if (groups.length === 0) {
         canvas.innerHTML = `<div class=\"p-12 text-center text-gray-400 font-medium\">No properties found in ${countyInfo.name}.</div>`; // Update message
-        if (saveContainer) saveContainer.classList.add('hidden');
         return;
     }
 
@@ -569,9 +577,9 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
                         </span>
                     </td>
                     <td class=\"p-2 text-right\">
-                        <a href=\"${item.sdat_url}\" target=\"_blank\" class=\"text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}\">
+                        ${item.sdat_url ? `<a href=\"${escapeHtml(item.sdat_url)}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}\">` : '<span class=\"text-[10px] font-bold text-gray-400\">'}
                             ProLookup LINK
-                        </a>
+                        ${item.sdat_url ? '</a>' : '</span>'}
                     </td>
                 </tr>
             `;
@@ -618,13 +626,6 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
         });
     });
     
-    if (saveContainer) {
-        if (currentUser && !currentUser.isAnonymous) {
-            saveContainer.classList.remove('hidden');
-        } else {
-            saveContainer.classList.add('hidden');
-        }
-    }
 };
 
 window.setStreetNumberFilter = function(filter) {
@@ -842,6 +843,56 @@ window.saveOrUpdateBatch = function() {
     }
 };
 
+window.switchBatchSharing = function() {
+    if (!currentUser || currentUser.isAnonymous) return window.showToast("Sign in to change batch sharing", "error");
+    if (!currentBatchId) return window.showToast("Open a saved batch first", "error");
+
+    const source = currentBatchSource;
+    const targetSource = source === 'public' ? 'private' : 'public';
+    const targetLabel = targetSource === 'public' ? 'Team Shared' : 'Private';
+
+    window.openConfirmModal(
+        `Move batch to ${targetLabel}?`,
+        targetSource === 'public'
+            ? "Everyone using the app will be able to view and edit this batch."
+            : "This batch will be removed from Team Shared and moved to your private history.",
+        async () => {
+            try {
+                const batchId = currentBatchId;
+                const sourceRef = doc(getCollectionRef(source), batchId);
+                const targetRef = doc(getCollectionRef(targetSource), batchId);
+
+                await runTransaction(db, async (transaction) => {
+                    const sourceSnapshot = await transaction.get(sourceRef);
+                    if (!sourceSnapshot.exists()) throw new Error("The saved batch no longer exists.");
+
+                    const targetSnapshot = await transaction.get(targetRef);
+                    if (targetSnapshot.exists()) throw new Error("A batch with this identifier already exists in the destination.");
+
+                    transaction.set(targetRef, {
+                        ...sourceSnapshot.data(),
+                        data: groupedBatch,
+                        addressStatuses: Object.fromEntries(addressStatuses),
+                        isPublic: targetSource === 'public'
+                    });
+                    transaction.delete(sourceRef);
+                });
+
+                currentBatchSource = targetSource;
+                lastSyncedStatuses.clear();
+                for (const [key, status] of addressStatuses) {
+                    lastSyncedStatuses.set(key, status);
+                }
+                window.renderResults(groupedBatch);
+                window.showToast(`Batch moved to ${targetLabel}`, "success");
+            } catch (error) {
+                console.error("Batch sharing change failed:", error);
+                window.showToast(`Could not move batch: ${error.message}`, "error");
+            }
+        }
+    );
+};
+
 window.confirmSave = async function() {
     const batchName = document.getElementById('batch-name-input').value.trim();
     if (!batchName) return window.showToast("Enter a name", "error");
@@ -869,6 +920,7 @@ window.confirmSave = async function() {
             lastSyncedStatuses.set(k, v);
         }
 
+        window.renderResults(groupedBatch);
         window.showToast(`Batch saved to ${isPublic ? 'Team Shared' : 'Private'} history!`, "success");
         window.closeSaveModal();
     } catch (error) {

@@ -4,13 +4,13 @@ A secure, web-based utility for batch processing address lists, querying Marylan
 
 🚀 Features
 
-MD Property Data Integration: Automatically fetches Owner Name, Occupancy Status, and Zip Code from the Maryland iMAP API (geodata.md.gov) for Prince George's County.
+MD Property Data Integration: Uses the selected county to query Maryland iMAP (Prince George's County: `PRIN`; Montgomery County: `MONT`) and uses the service-provided SDAT link so addresses shared across counties open the correct parcel record.
 
 Smart Cleaning: Handles raw text or tab-delimited inputs (e.g., from Excel), creates clean "First MI Last" name formats, and removes "ET AL".
 
 Filtering: Automatically filters out businesses and non-owner-occupied properties.
 
-Secure Cloud Storage: Uses Firebase Firestore to save batch history. Data is stored in private, user-specific paths (/users/{uid}/data), ensuring one user cannot see another's searches.
+Secure Cloud Storage: Uses Firebase Firestore for private, user-specific batches and team-shared batches. Opened batches can be moved between private and team-shared history.
 
 Print-Ready Layout: Generates an 8.5" x 11" formatted table with color-coded street groupings for easy physical review.
 
