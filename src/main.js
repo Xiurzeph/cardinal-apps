@@ -53,6 +53,7 @@ const lastSyncedStatuses = new Map();
 let addressStatusSyncInProgress = false;
 
 const ADDRESS_STATUSES = [
+    'choose status',
     'home',
     'letter',
     'busy',
@@ -90,6 +91,8 @@ function matchesStreetNumberFilter(address, filter) {
 
 function getStatusStyle(status) {
     switch (status) {
+        case 'choose status':
+            return { textColor: 'text-gray-700', bgColor: 'bg-gray-50', strikethrough: false, indicator: '' };
         case 'home':
             return { textColor: 'text-gray-900', bgColor: 'bg-white', strikethrough: false, indicator: '' };
         case 'letter':
@@ -467,14 +470,16 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
 
         const itemsHtml = visibleItems.map(item => {
             const key = getAddressKey(item.full_address, item.city, item.zip);
-            const status = addressStatuses.get(key) || 'home';
+            const status = addressStatuses.get(key) || 'choose status';
             const styleInfo = getStatusStyle(status);
 
             const safeAddress = escapeHtml(item.full_address);
             const safeCityText = escapeHtml(item.city);
             const safeZipText = escapeHtml(item.zip);
             const statusOptions = ADDRESS_STATUSES.map(statusOption => {
-                const label = getStatusStyle(statusOption).indicator || '🏠 Home';
+                const label = statusOption === 'choose status'
+                    ? 'Choose Status'
+                    : getStatusStyle(statusOption).indicator || 'Home';
                 return `<option value="${escapeHtml(statusOption)}" ${statusOption === status ? 'selected' : ''}>${escapeHtml(label)}</option>`;
             }).join('');
 
@@ -692,7 +697,7 @@ window.toggleGroupComplete = async function(idx) {
 
     group.items.forEach((item) => {
         const key = getAddressKey(item.full_address, item.city, item.zip);
-        addressStatuses.set(key, shouldComplete ? 'letter' : 'home');
+        addressStatuses.set(key, shouldComplete ? 'letter' : 'choose status');
     });
 
     groupedBatch = groupedBatch.map((entry, index) => index === idx ? { ...entry, completed: shouldComplete } : entry);
