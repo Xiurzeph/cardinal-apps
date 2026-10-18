@@ -30,6 +30,7 @@ let currentBatchId = null;
 let currentBatchSource = 'private'; // 'private' or 'public'
 let pendingAction = null; 
 let groupedBatch = []; 
+const groupStreetNumberFilters = new Map();
 let currentTab = 'formatter';
 let currentDbSubTab = 'private'; // Sub-navigation inside history tab
 let activeShareText = ''; // Temporarily stores text generated for active sharing instance
@@ -74,6 +75,16 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function matchesStreetNumberFilter(address, filter) {
+    if (filter === 'all') return true;
+
+    const match = String(address ?? '').match(/^\s*(\d+)/);
+    if (!match) return false;
+
+    const isOdd = Number(match[1]) % 2 === 1;
+    return filter === 'odd' ? isOdd : !isOdd;
 }
 
 function getStatusStyle(status) {
@@ -321,6 +332,7 @@ async function runLookupAndFormat() {
     }
 
     groupedBatch = chunkArray(results, 5);
+    groupStreetNumberFilters.clear();
     window.renderResults(groupedBatch);
     hideProgressModal();
     
@@ -427,14 +439,19 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
 
     const html = groups.map((group, gIdx) => {
         const isDone = group.completed;
+        const activeFilter = groupStreetNumberFilters.get(gIdx) || 'all';
+        const visibleItems = group.items.filter(item => matchesStreetNumberFilter(item.full_address, activeFilter));
+        const propertyCount = activeFilter === 'all'
+            ? `${group.items.length} Properties`
+            : `${visibleItems.length} of ${group.items.length} Properties`;
 
-        const itemsHtml = group.items.map(item => {
+        const itemsHtml = visibleItems.map(item => {
             const key = getAddressKey(item.full_address, item.city, item.zip);
             const status = addressStatuses.get(key) || 'home';
             const styleInfo = getStatusStyle(status);
 
             const statusIndicator = status !== 'home' 
-                ? `<div class=\"text-[9px] font-bold uppercase mt-2 opacity-75\">${styleInfo.indicator}</div>` 
+                ? `<div class=\"text-[9px] font-bold uppercase mt-1 opacity-75\">${styleInfo.indicator}</div>`
                 : '';
             const safeAddress = escapeHtml(item.full_address);
             const safeCityText = escapeHtml(item.city);
@@ -443,19 +460,19 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
 
             return `
                 <tr class=\"${isDone ? 'line-through text-gray-400' : ''} cursor-pointer hover:opacity-80 transition-opacity\" data-address-key=\"${addressKey}\" title=\"Click to cycle status\">
-                    <td class=\"p-4\">
-                        <div class=\"p-3 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all\">
+                    <td class=\"p-2\">
+                        <div class=\"p-2 rounded-lg ${isDone ? '' : styleInfo.bgColor} ${isDone ? '' : styleInfo.textColor} ${styleInfo.strikethrough ? 'line-through' : ''} transition-all\">
                             <div class=\"text-sm font-bold\">${safeAddress}</div>
                             <div class=\"text-[10px] uppercase ${isDone ? 'text-gray-400' : 'text-gray-600'} mt-1\">${safeCityText}, MD ${safeZipText}</div>
                             ${statusIndicator}
                         </div>
                     </td>
-                    <td class=\"p-4\">
+                    <td class=\"p-2\">
                         <span class=\"px-2 py-0.5 rounded text-[9px] font-black uppercase ${item.occupancy === 'Owner' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}\">
                             ${item.occupancy}
                         </span>
                     </td>
-                    <td class=\"p-4 text-right\">
+                    <td class=\"p-2 text-right\">
                         <a href=\"${item.sdat_url}\" target=\"_blank\" class=\"text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}\">
                             ProLookup LINK
                         </a>
@@ -463,15 +480,25 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
                 </tr>
             `;
         }).join('');
+        const emptyFilterMessage = visibleItems.length === 0
+            ? `<tr><td colspan=\"3\" class=\"p-3 text-center text-xs text-gray-400\">No ${activeFilter} street numbers in this group.</td></tr>`
+            : '';
 
         return `
-            <div class=\"mb-8 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}\">
-                <div class=\"bg-gray-50 px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4\">
+            <div class=\"mb-6 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden ${isDone ? 'opacity-50 grayscale' : ''}\">
+                <div class=\"bg-gray-50 px-4 py-3 border-b flex flex-wrap items-center justify-between gap-3\">
                     <div class=\"flex items-center gap-3\">
                         <span class=\"bg-cardinal text-white text-[10px] font-black px-2 py-1 rounded uppercase tracking-tighter\">Group ${gIdx + 1}</span>
-                        <h3 class=\"text-sm font-bold text-gray-800 ${isDone ? 'line-through' : ''}\">${group.items.length} Properties</h3>
+                        <h3 class=\"text-sm font-bold text-gray-800 ${isDone ? 'line-through' : ''}\">${propertyCount}</h3>
                     </div>
-                    <div class=\"flex items-center gap-2\">
+                    <div class=\"flex flex-wrap items-center gap-2\">
+                        <div class=\"flex items-center gap-1 rounded-lg bg-white p-1\" role=\"group\" aria-label=\"Filter group ${gIdx + 1} by street number\">
+                            ${['all', 'odd', 'even'].map(filter => `
+                                <button type=\"button\" onclick=\"window.setGroupStreetNumberFilter(${gIdx}, '${filter}')\" aria-pressed=\"${activeFilter === filter}\" class=\"px-2 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${activeFilter === filter ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-100'}\">
+                                    ${filter === 'all' ? 'All' : filter}
+                                </button>
+                            `).join('')}
+                        </div>
                         <button onclick=\"window.shareGroup(${gIdx})\" class=\"bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-blue-100 transition-all ${isDone ? 'pointer-events-none opacity-20' : ''}\">
                             Share Group
                         </button>
@@ -482,7 +509,7 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
                 </div>
                 <div class=\"overflow-x-auto\">
                     <table class=\"w-full text-left border-collapse\">
-                        <tbody class=\"divide-y divide-gray-100\">${itemsHtml}</tbody>
+                        <tbody class=\"divide-y divide-gray-100\">${itemsHtml}${emptyFilterMessage}</tbody>
                     </table>
                 </div>
             </div>
@@ -513,6 +540,13 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
             saveContainer.classList.add('hidden');
         }
     }
+};
+
+window.setGroupStreetNumberFilter = function(idx, filter) {
+    if (!groupedBatch[idx] || !['all', 'odd', 'even'].includes(filter)) return;
+
+    groupStreetNumberFilters.set(idx, filter);
+    window.renderResults(groupedBatch);
 };
 
 /**
@@ -798,6 +832,7 @@ window.viewBatch = function(batchId, source = 'private') {
     const entry = window[`batchData_${batchId}`];
     if (entry) {
         groupedBatch = normalizeBatchData(entry.data);
+        groupStreetNumberFilters.clear();
         currentBatchId = entry.id;
         currentBatchSource = source || entry.source || 'private';
         
