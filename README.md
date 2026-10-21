@@ -4,13 +4,13 @@ A secure, web-based utility for batch processing address lists, querying Marylan
 
 🚀 Features
 
-MD Property Data Integration: Uses the selected county to query Maryland iMAP (Prince George's County: `PRIN`; Montgomery County: `MONT`) and uses the service-provided SDAT link so addresses shared across counties open the correct parcel record.
+MD Property Data Integration: Uses the selected county to query Maryland iMAP (Prince George's County: `PRIN`; Montgomery County: `MONT`). Property lookup links use PropLookup at `https://www.marylandgov.us/property?address=<URL-encoded street address>` (for example, `https://www.marylandgov.us/property?address=6000%20kirby%20road`). Always derive the `address` query parameter from the matched street address for both result links and shared links. Do not use SDAT or iMAP's `SDATWEBADR` links for PropLookup: they do not support these address-based lookups.
 
 Smart Cleaning: Handles raw text or tab-delimited inputs (e.g., from Excel), creates clean "First MI Last" name formats, and removes "ET AL".
 
 Filtering: Automatically filters out businesses and non-owner-occupied properties.
 
-Secure Cloud Storage: Uses Firebase Firestore for private, user-specific batches and team-shared batches. Opened batches can be moved between private and team-shared history.
+Secure Cloud Storage: Uses Firebase Firestore for private, user-specific batches and team-shared batches. Opened batches can be moved between private and team-shared history, and multiple batches can be selected for deletion from either history tab.
 
 Print-Ready Layout: Generates an 8.5" x 11" formatted table with color-coded street groupings for easy physical review.
 

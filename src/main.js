@@ -80,6 +80,12 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function getPropertyLookupUrl(address) {
+    const url = new URL('https://www.marylandgov.us/property');
+    url.searchParams.set('address', address);
+    return url.toString();
+}
+
 function matchesStreetNumberFilter(address, filter) {
     if (filter === 'all') return true;
 
@@ -358,8 +364,7 @@ async function runLookupAndFormat() {
                         full_address: result.address_full,
                         city: result.city,
                         zip: result.zip,
-                        occupancy: isOwnerOcc ? "Owner" : "Rental/Other",
-                        sdat_url: result.sdat_url
+                        occupancy: isOwnerOcc ? "Owner" : "Rental/Other"
                     });
                 } else {
                     ownerOccupiedFilteredCount++;
@@ -449,7 +454,7 @@ async function fetchPropertyData(addressStr) {
         // Step 2: Query Property DB with strict county priority
         const queryParams = new URLSearchParams({
             where: exactWhere,
-            outFields: 'ADDRESS,OOI,SDATWEBADR,CITY,ZIPCODE',
+            outFields: 'ADDRESS,OOI,CITY,ZIPCODE',
             f: 'json',
             resultRecordCount: 1
         });
@@ -465,9 +470,7 @@ async function fetchPropertyData(addressStr) {
                 address_full: attr.ADDRESS,
                 city: attr.CITY || 'CLINTON', 
                 zip: attr.ZIPCODE || '',
-                raw_ooi: attr.OOI, 
-                // Always construct the direct clickable URL pointing to the marylandgov.us portal
-                sdat_url: attr.SDATWEBADR || null
+                raw_ooi: attr.OOI
             };
         }
     } catch (e) {
@@ -577,9 +580,9 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
                         </span>
                     </td>
                     <td class=\"p-2 text-right\">
-                        ${item.sdat_url ? `<a href=\"${escapeHtml(item.sdat_url)}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}\">` : '<span class=\"text-[10px] font-bold text-gray-400\">'}
-                            ProLookup LINK
-                        ${item.sdat_url ? '</a>' : '</span>'}
+                        <a href=\"${escapeHtml(getPropertyLookupUrl(item.full_address))}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"text-[10px] font-black text-cardinal hover:underline ${isDone ? 'pointer-events-none text-gray-300' : ''}\">
+                            PropLookup Link
+                        </a>
                     </td>
                 </tr>
             `;
@@ -668,7 +671,7 @@ window.shareGroup = function(idx) {
     // Explicit format matching: correct "Addresses" spelling and "PropLookup:" service prefix
     activeShareText = [
         `Addresses ${idx + 1}:`,
-        ...group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  PropLookup: ${i.sdat_url}`)
+        ...group.items.map(i => `- ${i.full_address}, ${i.city}, MD ${i.zip}\n  PropLookup: ${getPropertyLookupUrl(i.full_address)}`)
     ].join('\n\n');
 
     const modal = document.getElementById('share-modal');
@@ -933,7 +936,14 @@ async function loadHistory() {
     if (!currentUser || currentUser.isAnonymous) return;
 
     const tableBody = document.getElementById("db-table-body");
-    tableBody.innerHTML = '<tr><td colspan=\"3\" class=\"p-4 text-center text-gray-400 italic\">Loading history...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan=\"4\" class=\"p-4 text-center text-gray-400 italic\">Loading history...</td></tr>';
+    const selectAll = document.getElementById('db-select-all');
+    if (selectAll) {
+        selectAll.checked = false;
+        selectAll.indeterminate = false;
+        selectAll.disabled = true;
+    }
+    updateBatchSelection();
 
     try {
         const querySnapshot = await getDocs(getCollectionRef(currentDbSubTab));
@@ -942,7 +952,7 @@ async function loadHistory() {
         batches.sort((a, b) => b.timestamp - a.timestamp);
 
         if (batches.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan=\"3\" class=\"p-4 text-center text-gray-500\">No ${currentDbSubTab} batches found.</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan=\"4\" class=\"p-4 text-center text-gray-500\">No ${currentDbSubTab} batches found.</td></tr>`;
             return;
         }
 
@@ -960,6 +970,9 @@ async function loadHistory() {
 
             return `
                 <tr>
+                    <td class=\"px-4 py-4\">
+                        <input type=\"checkbox\" data-batch-select data-batch-id=\"${escapeHtml(batch.id)}\" aria-label=\"Select ${escapeHtml(batch.name || 'unnamed batch')}\" onchange=\"window.updateBatchSelection()\" class=\"h-4 w-4 accent-red-600\">
+                    </td>
                     <td class=\"px-6 py-4\">
                         <div class=\"font-bold text-gray-800\">${batch.name}</div>
                         <div class=\"text-[10px] text-gray-400\">${new Date(batch.timestamp).toLocaleString()}</div>
@@ -981,12 +994,40 @@ async function loadHistory() {
         }).join('');
 
         tableBody.innerHTML = batchesHtml;
+        if (selectAll) selectAll.disabled = false;
+        updateBatchSelection();
 
     } catch (error) {
         console.error("Load History Error: ", error);
-        tableBody.innerHTML = '<tr><td colspan=\"3\" class=\"p-4 text-center text-red-500\">Error loading history</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan=\"4\" class=\"p-4 text-center text-red-500\">Error loading history</td></tr>';
     }
 }
+
+function updateBatchSelection() {
+    const checkboxes = Array.from(document.querySelectorAll('#db-table-body [data-batch-select]'));
+    const selectedCount = checkboxes.filter(checkbox => checkbox.checked).length;
+    const selectAll = document.getElementById('db-select-all');
+    const deleteSelectedButton = document.getElementById('btn-delete-selected-batches');
+
+    if (selectAll) {
+        selectAll.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+        selectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+        selectAll.disabled = checkboxes.length === 0;
+    }
+    if (deleteSelectedButton) {
+        deleteSelectedButton.disabled = selectedCount === 0;
+        deleteSelectedButton.textContent = `Delete Selected (${selectedCount})`;
+    }
+}
+
+window.updateBatchSelection = updateBatchSelection;
+
+window.toggleSelectAllBatches = function(checked) {
+    document.querySelectorAll('#db-table-body [data-batch-select]').forEach(checkbox => {
+        checkbox.checked = checked;
+    });
+    updateBatchSelection();
+};
 
 window.viewBatch = function(batchId, source = 'private') {
     const entry = window[`batchData_${batchId}`];
@@ -1027,6 +1068,33 @@ window.requestDeleteBatch = function(id, source = 'private') {
             loadHistory();
         } catch (e) { window.showToast("Delete failed", "error"); }
     });
+};
+
+window.requestDeleteSelectedBatches = function() {
+    const selectedIds = Array.from(document.querySelectorAll('#db-table-body [data-batch-select]:checked'))
+        .map(checkbox => checkbox.dataset.batchId);
+    if (selectedIds.length === 0) return;
+
+    const targetSource = currentDbSubTab;
+    window.openConfirmModal(
+        `Delete ${selectedIds.length} selected ${selectedIds.length === 1 ? 'batch' : 'batches'}?`,
+        `This will permanently delete the selected ${targetSource === 'public' ? 'team shared' : 'private'} batches. This action cannot be undone.`,
+        async () => {
+            const results = await Promise.allSettled(
+                selectedIds.map(id => deleteDoc(doc(getCollectionRef(targetSource), id)))
+            );
+            const deletedCount = results.filter(result => result.status === 'fulfilled').length;
+            const failedResults = results.filter(result => result.status === 'rejected');
+
+            failedResults.forEach(result => console.error('Batch deletion failed:', result.reason));
+            if (deletedCount > 0) {
+                window.showToast(`${deletedCount} ${deletedCount === 1 ? 'batch' : 'batches'} deleted${failedResults.length ? `; ${failedResults.length} failed` : ''}`);
+            } else {
+                window.showToast('Could not delete selected batches', 'error');
+            }
+            await loadHistory();
+        }
+    );
 };
 
 window.requestClearAllHistory = function() {
