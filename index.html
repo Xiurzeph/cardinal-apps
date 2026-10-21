@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cardinal Address Lookup</title>
 <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
-  <script type="module" crossorigin src="./assets/index-CEMYvKFw.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-CCYJrbVv.css">
+  <script type="module" crossorigin src="./assets/index-BWMMqksd.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-bA3aLY9k.css">
 </head>
 <body class="bg-gray-50 font-sans text-gray-900 h-screen flex flex-col relative">
 <div id="toast-container" class="fixed bottom-6 right-6 z-[200] flex flex-col items-end"></div>
@@ -121,10 +121,15 @@
 <button onclick="window.switchDbSubTab('private')" id="btn-subtab-private" class="font-bold text-sm pb-2 border-b-2 border-cardinal text-cardinal transition-all">My Private Batches</button>
 <button onclick="window.switchDbSubTab('public')" id="btn-subtab-public" class="font-bold text-sm pb-2 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-all">Team Shared Batches</button>
 </div>
+<div class="flex items-center justify-between gap-3 mb-3 no-print">
+<p class="text-xs text-gray-500">Select batches to delete multiple at once.</p>
+<button id="btn-delete-selected-batches" onclick="window.requestDeleteSelectedBatches()" disabled class="rounded-lg bg-red-600 px-4 py-2 text-[10px] font-black uppercase tracking-wide text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-300">Delete Selected (0)</button>
+</div>
 <div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
 <table class="min-w-full divide-y divide-gray-100">
 <thead class="bg-gray-50 text-gray-400 uppercase text-[10px] tracking-widest font-bold">
 <tr>
+<th class="px-4 py-4 text-left"><input id="db-select-all" type="checkbox" aria-label="Select all batches" onchange="window.toggleSelectAllBatches(this.checked)" class="h-4 w-4 accent-red-600"></th>
 <th class="px-6 py-4 text-left">Batch Name</th>
 <th class="px-6 py-4 text-left">Details</th>
 <th class="px-6 py-4 text-right">Actions</th>
