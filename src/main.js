@@ -138,7 +138,7 @@ function getStatusStyle(status) {
         case 'no soliciting':
             return { textColor: 'text-orange-600', bgColor: 'bg-orange-50', strikethrough: false, indicator: '⛔ No Soliciting' };
         case 'not trespassing':
-            return { textColor: 'text-white', bgColor: 'bg-red-500', strikethrough: true, indicator: '⚠️ Not Trespassing' };
+            return { textColor: 'text-white', bgColor: 'bg-red-500', strikethrough: true, indicator: '⚠️ No Trespassing' };
         case 'do not call':
             return { textColor: 'text-white', bgColor: 'bg-red-500', strikethrough: true, indicator: '📞 Do Not Call' };
         default:
