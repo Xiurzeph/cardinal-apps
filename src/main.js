@@ -1273,18 +1273,61 @@ function hideProgressModal() {
     if (modal) modal.classList.add('hidden');
 }
 
+const MAX_VISIBLE_TOASTS = 2;
+const TOAST_DURATION_MS = 2000;
+const pendingToasts = [];
+let visibleToastCount = 0;
+let toastBadge = null;
+
+function updateToastBadge(container) {
+    if (pendingToasts.length === 0) {
+        toastBadge?.remove();
+        toastBadge = null;
+        return;
+    }
+    if (!toastBadge) {
+        toastBadge = document.createElement('div');
+        toastBadge.className = 'mb-2 min-w-6 rounded-full bg-gray-800/90 px-2 py-0.5 text-center text-[10px] font-bold text-white shadow';
+        toastBadge.setAttribute('aria-hidden', 'true');
+    }
+    toastBadge.textContent = `+${pendingToasts.length}`;
+    container.appendChild(toastBadge); // keeps the badge below the visible toasts
+}
+
+function displayToast(container, { msg, type }) {
+    const toast = document.createElement('div');
+    toast.className = `pointer-events-auto mb-2 px-3 py-1.5 rounded-md shadow text-white text-xs font-semibold transform transition-all duration-300 translate-y-4 opacity-0 ${type === 'success' ? 'bg-emerald-600/90' : 'bg-red-600/90'}`;
+    toast.innerText = msg;
+    let dismissed = false;
+    const dismiss = () => {
+        if (dismissed) return;
+        dismissed = true;
+        toast.classList.add('opacity-0');
+        setTimeout(() => {
+            toast.remove();
+            visibleToastCount--;
+            pumpToasts(container);
+        }, 300);
+    };
+    toast.addEventListener('click', dismiss);
+    container.insertBefore(toast, toastBadge);
+    visibleToastCount++;
+    setTimeout(() => toast.classList.remove('translate-y-4', 'opacity-0'), 10);
+    setTimeout(dismiss, TOAST_DURATION_MS);
+}
+
+function pumpToasts(container) {
+    while (visibleToastCount < MAX_VISIBLE_TOASTS && pendingToasts.length > 0) {
+        displayToast(container, pendingToasts.shift());
+    }
+    updateToastBadge(container);
+}
+
 window.showToast = function(msg, type = "success") { // Expose to window for global access
     const container = document.getElementById('toast-container');
     if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = `mb-3 px-6 py-3 rounded-lg shadow-lg text-white font-bold transform transition-all duration-300 translate-y-10 opacity-0 ${type === 'success' ? 'bg-emerald-600' : 'bg-red-600'}`;
-    toast.innerText = msg;
-    container.appendChild(toast);
-    setTimeout(() => toast.classList.remove('translate-y-10', 'opacity-0'), 10);
-    setTimeout(() => {
-        toast.classList.add('opacity-0');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    pendingToasts.push({ msg, type });
+    pumpToasts(container);
 }
 
 window.runLookupAndFormat = runLookupAndFormat;
