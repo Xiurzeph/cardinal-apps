@@ -383,6 +383,7 @@ async function runLookupAndFormat() {
     streetNumberFilter = 'all';
     statusFilter = null;
     window.renderResults(groupedBatch);
+    if (groupedBatch.length > 0) window.setPropertyInputCollapsed(true);
     hideProgressModal();
     setLookupSummary({
         found: results.length,
@@ -550,9 +551,9 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
             <div class="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm" role="group" aria-label="Filter by status">
                 <h2 class="mr-2 text-xs font-black uppercase tracking-wide text-gray-700">Status</h2>
                 <button type="button" onclick="window.setStatusFilter('all')" aria-pressed="${!statusFilter}" class="min-h-8 rounded-md px-3 text-xs font-bold uppercase transition-all ${!statusFilter ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">All</button>
-                ${ADDRESS_STATUSES.map(s => {
-                    const on = statusFilter ? statusFilter.has(s) : false;
-                    const label = s === 'choose status' ? 'Choose Status' : getStatusStyle(s).indicator || 'Home';
+                ${ADDRESS_STATUSES.filter(s => s !== 'choose status')                .map(s => {
+                                    const on = statusFilter ? statusFilter.has(s) : false;
+                                    const label = getStatusStyle(s).indicator || 'Home';
                     return `<button type="button" onclick="window.toggleStatusFilter('${s}')" aria-pressed="${on}" class="min-h-8 rounded-md px-3 text-xs font-bold transition-all ${on ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">${escapeHtml(label)}</button>`;
                 }).join('')}
             </div>`;
@@ -671,6 +672,17 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
         });
     });
     
+};
+
+window.setPropertyInputCollapsed = function(collapsed) {
+    document.getElementById('propertyInputBody')?.classList.toggle('hidden', collapsed);
+    document.getElementById('btnTogglePropertyInput')?.setAttribute('aria-expanded', String(!collapsed));
+    document.getElementById('propertyInputChevron')?.classList.toggle('-rotate-90', collapsed);
+};
+
+window.togglePropertyInput = function() {
+    const body = document.getElementById('propertyInputBody');
+    window.setPropertyInputCollapsed(!body.classList.contains('hidden'));
 };
 
 window.setStreetNumberFilter = function(filter) {
@@ -1118,6 +1130,7 @@ window.viewBatch = function(batchId, source = 'private') {
         }
         
         window.renderResults(groupedBatch);
+        window.setPropertyInputCollapsed(true);
         window.switchTab('formatter');
         window.showToast(`Loaded ${currentBatchSource === 'public' ? 'Team Shared' : 'Private'} batch`);
     }
