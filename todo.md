@@ -14,7 +14,9 @@ Add the ability to switch back and forth between two views of the currently open
 
 ### 1c. Door-to-Door view
 - [x] Shows all results as a **flat list, not grouped**.
-- [x] Add a new filter, titled **"Status"**, to choose which statuses are included in the currently opened batch (multi-select; filters the list only). "Choose Status" is not offered as a filter option.
+- [x] Add a new filter, titled **"Status"**, to choose which statuses are included in the currently opened batch (multi-select; filters the list only). "Choose Status", "Home" and "Letter" are not offered; "Not Home" covers Busy and Not Home 1-3.
+- [x] Add a **Street name** dropdown filtering on the street names in the batch.
+- [x] Rename the street number heading to "Street number sort".
 
 ## Requirement 3: UI polish
 - [x] Make toasts less obtrusive on mobile: smaller, translucent, click-through, tap to dismiss, 2s duration.

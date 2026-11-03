@@ -33,6 +33,7 @@ let groupedBatch = [];
 let streetNumberFilter = 'all';
 let viewMode = 'letter'; // 'letter' (grouped) or 'door' (flat list)
 let statusFilter = null; // null = all statuses; otherwise a Set of statuses included in door-to-door view
+let streetNameFilter = 'all';
 let printAllResults = false;
 let currentTab = 'formatter';
 let currentDbSubTab = 'private'; // Sub-navigation inside history tab
@@ -69,6 +70,13 @@ const ADDRESS_STATUSES = [
     'do not call'
 ];
 
+// Door-to-door Status filter buttons; "not home 1-3" is a single button covering all three statuses
+const STATUS_FILTER_OPTIONS = ADDRESS_STATUSES
+    .filter(s => !['choose status', 'home', 'letter', 'busy', 'not home 2', 'not home 3'].includes(s))
+    .map(s => s === 'not home 1'
+        ? { id: 'not home', label: '🚪 Not Home', statuses: ['busy', 'not home 1', 'not home 2', 'not home 3'] }
+        : { id: s, label: getStatusStyle(s).indicator, statuses: [s] });
+
 function getAddressKey(address, city, zip) {
     return `${address}|${city}|${zip}`;
 }
@@ -96,6 +104,10 @@ function matchesStreetNumberFilter(address, filter) {
 
     const isOdd = streetNumber % 2 === 1;
     return filter === 'odd' ? isOdd : !isOdd;
+}
+
+function getStreetName(address) {
+    return String(address ?? '').replace(/^\s*\d+\s*/, '').trim().toUpperCase();
 }
 
 function getStreetNumber(address) {
@@ -383,6 +395,7 @@ async function runLookupAndFormat() {
     groupedBatch = chunkArray(results, 5);
     streetNumberFilter = 'all';
     statusFilter = null;
+    streetNameFilter = 'all';
     window.renderResults(groupedBatch);
     if (groupedBatch.length > 0) window.setPropertyInputCollapsed(true);
     hideProgressModal();
@@ -508,7 +521,12 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
     const activeFilter = printAllResults || !isDoorView ? 'all' : streetNumberFilter;
     const getStatus = item => addressStatuses.get(getAddressKey(item.full_address, item.city, item.zip)) || 'choose status';
     const passesStatusFilter = item => printAllResults || !isDoorView || !statusFilter || statusFilter.has(getStatus(item));
-    const passesFilters = item => matchesStreetNumberFilter(item.full_address, activeFilter) && passesStatusFilter(item);
+    const passesFilters = item => matchesStreetNumberFilter(item.full_address, activeFilter)
+        && passesStatusFilter(item)
+        && (printAllResults || !isDoorView || streetNameFilter === 'all' || getStreetName(item.full_address) === streetNameFilter);
+    const streetNames = [...new Set(groups.flatMap(g => g.items).map(i => getStreetName(i.full_address)).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b));
+    if (streetNameFilter !== 'all' && !streetNames.includes(streetNameFilter)) streetNameFilter = 'all';
     const totalProperties = groups.reduce((total, group) => total + group.items.length, 0);
     const visibleProperties = groups.reduce(
         (total, group) => total + group.items.filter(passesFilters).length,
@@ -538,7 +556,7 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
     const streetFilterHtml = !isDoorView ? '' : `
             <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
                 <div>
-                    <h2 class="text-xs font-black uppercase tracking-wide text-gray-700">Street number filter</h2>
+                    <h2 class="text-xs font-black uppercase tracking-wide text-gray-700">Street number sort</h2>
                     <p class="text-[11px] text-gray-500">${visibleProperties} of ${totalProperties} properties${activeFilter !== 'all' ? ` · ${unclassifiedProperties} without a leading street number` : ''}</p>
                 </div>
                 <div class="flex items-center gap-1 rounded-lg bg-gray-100 p-1" role="group" aria-label="Filter by street number">
@@ -549,13 +567,19 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
                     `).join('')}
                 </div>
             </div>
+            <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <label for="streetNameFilter" class="text-xs font-black uppercase tracking-wide text-gray-700">Street name</label>
+                <select id="streetNameFilter" onchange="window.setStreetNameFilter(this.value)" class="min-h-10 max-w-full rounded-md border border-gray-300 bg-white px-3 text-xs font-bold text-gray-700">
+                    <option value="all">All streets</option>
+                    ${streetNames.map(name => `<option value="${escapeHtml(name)}" ${name === streetNameFilter ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+                </select>
+            </div>
             <div class="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm" role="group" aria-label="Filter by status">
                 <h2 class="mr-2 text-xs font-black uppercase tracking-wide text-gray-700">Status</h2>
                 <button type="button" onclick="window.setStatusFilter('all')" aria-pressed="${!statusFilter}" class="min-h-8 rounded-md px-3 text-xs font-bold uppercase transition-all ${!statusFilter ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">All</button>
-                ${ADDRESS_STATUSES.filter(s => s !== 'choose status')                .map(s => {
-                                    const on = statusFilter ? statusFilter.has(s) : false;
-                                    const label = getStatusStyle(s).indicator || 'Home';
-                    return `<button type="button" onclick="window.toggleStatusFilter('${s}')" aria-pressed="${on}" class="min-h-8 rounded-md px-3 text-xs font-bold transition-all ${on ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">${escapeHtml(label)}</button>`;
+                ${STATUS_FILTER_OPTIONS.map(option => {
+                    const on = statusFilter ? option.statuses.every(s => statusFilter.has(s)) : false;
+                    return `<button type="button" onclick="window.toggleStatusFilter('${option.id}')" aria-pressed="${on}" class="min-h-8 rounded-md px-3 text-xs font-bold transition-all ${on ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">${escapeHtml(option.label)}</button>`;
                 }).join('')}
             </div>`;
     const filterToolbar = `
@@ -700,16 +724,23 @@ window.setViewMode = function(mode) {
     window.renderResults(groupedBatch);
 };
 
+window.setStreetNameFilter = function(name) {
+    streetNameFilter = name || 'all';
+    window.renderResults(groupedBatch);
+};
+
 window.setStatusFilter = function(value) {
     if (value === 'all') statusFilter = null;
     window.renderResults(groupedBatch);
 };
 
-window.toggleStatusFilter = function(status) {
-    if (!ADDRESS_STATUSES.includes(status)) return;
+window.toggleStatusFilter = function(optionId) {
+    const option = STATUS_FILTER_OPTIONS.find(o => o.id === optionId);
+    if (!option) return;
 
     const next = new Set(statusFilter || []);
-    if (next.has(status)) next.delete(status); else next.add(status);
+    const allOn = option.statuses.every(s => next.has(s));
+    option.statuses.forEach(s => allOn ? next.delete(s) : next.add(s));
     statusFilter = next.size === 0 ? null : next;
     window.renderResults(groupedBatch);
 };
@@ -1112,6 +1143,7 @@ window.viewBatch = function(batchId, source = 'private') {
         groupedBatch = normalizeBatchData(entry.data);
         streetNumberFilter = 'all';
         statusFilter = null;
+        streetNameFilter = 'all';
         currentBatchId = entry.id;
         currentBatchSource = source || entry.source || 'private';
         

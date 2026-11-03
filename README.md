@@ -8,7 +8,13 @@ MD Property Data Integration: Uses the selected county to query Maryland iMAP (P
 
 Smart Cleaning: Handles raw text or tab-delimited inputs (e.g., from Excel), creates clean "First MI Last" name formats, and removes "ET AL".
 
-Filtering: Automatically filters out businesses and non-owner-occupied properties.
+Filtering: Automatically filters out businesses and non-owner-occupied properties. Addresses marked "Do Not Call" in the input are kept and given the Do Not Call status.
+
+Two Views: Switch the open batch between Letter Writing (results in groups, no filters) and Door-to-Door (one flat list). Door-to-Door adds filters for street number (All/Odd/Even), street name (dropdown of streets in the batch), and status (All, Not Home [includes Busy], Visited, No Soliciting, No Trespassing, Do Not Call). Printing ignores these filters.
+
+Collapsible Input: The Property addresses box can be collapsed, and collapses automatically when a batch is fetched or opened.
+
+Toasts: Small, tap-to-dismiss notifications; at most two show at once, with extras queued behind a +N badge.
 
 Secure Cloud Storage: Uses Firebase Firestore for private, user-specific batches and team-shared batches. Opened batches can be moved between private and team-shared history, and multiple batches can be selected for deletion from either history tab.
 
