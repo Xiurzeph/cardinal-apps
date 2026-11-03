@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cardinal Address Lookup</title>
 <link rel="icon" href="https://cardinalcomputersystems.com/cardinal-logo.png" type="image/png">
-  <script type="module" crossorigin src="./assets/index-grEZ3vPu.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-CQmnBcPp.css">
+  <script type="module" crossorigin src="./assets/index-oQUnAT5t.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CADuXkiO.css">
 </head>
 <body class="bg-gray-50 font-sans text-gray-900 h-screen flex flex-col relative">
 <div id="toast-container" class="no-print pointer-events-none fixed bottom-2 right-2 z-[200] flex max-w-[70vw] flex-col items-end sm:bottom-6 sm:right-6 sm:max-w-sm"></div>
@@ -56,9 +56,14 @@
 <main class="flex-1 overflow-auto p-4 sm:p-8 bg-gray-50">
 <div id="tab-formatter">
 <div class="no-print max-w-4xl mx-auto p-8 bg-white rounded-xl shadow-xl border border-gray-100 mb-8">
-<label for="csvInput" class="mb-2 block text-xs font-black uppercase tracking-wide text-gray-700">Property addresses</label>
+<button type="button" id="btnTogglePropertyInput" onclick="window.togglePropertyInput()" aria-expanded="true" aria-controls="propertyInputBody" class="mb-2 flex w-full items-center justify-between text-left">
+<span class="block text-xs font-black uppercase tracking-wide text-gray-700">Property addresses</span>
+<svg id="propertyInputChevron" class="h-4 w-4 text-gray-500 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+</button>
+<div id="propertyInputBody">
 <textarea id="csvInput" class="w-full h-32 p-4 bg-gray-50 border border-gray-200 text-gray-800 rounded-lg font-mono text-sm focus:ring-2 focus:ring-cardinal/20 focus:border-cardinal outline-none mb-2 transition-all" placeholder="One address per line, e.g.&#10;123 Main St&#10;456 Oak Ave"></textarea>
 <p class="mb-4 text-xs text-gray-500">Paste one street address per line. Spreadsheet rows are supported; entries marked “Do Not Call” are skipped.</p>
+</div>
 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
 <div class="flex flex-wrap items-center gap-2">
 <button onclick="window.runLookupAndFormat()" class="px-4 py-2 bg-cardinal text-white rounded-lg text-sm font-bold shadow-sm shadow-red-900/20 hover:bg-red-800 transition-all flex items-center justify-center gap-1.5">
