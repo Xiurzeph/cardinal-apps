@@ -24,6 +24,6 @@ Add the ability to switch back and forth between two views of the currently open
 
 ## Requirement 2: Include Do Not Knocks in batch fetch
 
-- [ ] Currently, Do Not Knock addresses are filtered out on batch fetch. Stop filtering them out.
-- [ ] Include them in the results list and assign them the **Do Not Call** status.
-- [ ] Make sure they are selectable/hideable via the new Door-to-Door **Status** filter.
+- [x] Currently, Do Not Knock addresses are filtered out on batch fetch. Stop filtering them out.
+- [x] Include them in the results list and assign them the **Do Not Call** status.
+- [x] Make sure they are selectable/hideable via the new Door-to-Door **Status** filter.

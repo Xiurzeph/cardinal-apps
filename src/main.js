@@ -317,13 +317,10 @@ async function runLookupAndFormat() {
     let skippedCount = 0;
     
     for (let line of lines) {
-        if (line.toLowerCase().includes("do not call")) {
-            skippedCount++;
-            continue;
-        }
+        const isDoNotCall = line.toLowerCase().includes("do not call");
         let cleanAddr = line.split(/Default|Never visited|\d{2}\/\d{2}\/\d{4}|R-\d+/i)[0].trim();
         cleanAddr = cleanAddr.replace(/^(\d+)([a-zA-Z])/, '$1 $2');
-        if (cleanAddr) validAddresses.push({ original: line, cleaned: cleanAddr });
+        if (cleanAddr) validAddresses.push({ original: line, cleaned: cleanAddr, doNotCall: isDoNotCall });
         else skippedCount++;
     }
 
@@ -361,13 +358,17 @@ async function runLookupAndFormat() {
 
             if (result) {
                 const isOwnerOcc = result.raw_ooi && result.raw_ooi.includes("H");
-                if (!ownerOccupiedOnly || (ownerOccupiedOnly && isOwnerOcc)) {
+                // Do Not Call entries are always kept, regardless of the owner-occupied filter
+                if (item.doNotCall || !ownerOccupiedOnly || isOwnerOcc) {
                     results.push({
                         full_address: result.address_full,
                         city: result.city,
                         zip: result.zip,
                         occupancy: isOwnerOcc ? "Owner" : "Rental/Other"
                     });
+                    if (item.doNotCall) {
+                        addressStatuses.set(getAddressKey(result.address_full, result.city, result.zip), 'do not call');
+                    }
                 } else {
                     ownerOccupiedFilteredCount++;
                 }
