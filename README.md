@@ -10,7 +10,7 @@ Smart Cleaning: Handles raw text or tab-delimited inputs (e.g., from Excel), cre
 
 Filtering: Automatically filters out businesses and non-owner-occupied properties. Addresses marked "Do Not Call" in the input are kept and given the Do Not Call status.
 
-Two Views: Switch the open batch between Letter Writing (results in groups, no filters) and Door-to-Door (one flat list). Door-to-Door adds filters for street number (All/Odd/Even), street name (dropdown of streets in the batch), and status (All, Not Home [includes Busy], Visited, No Soliciting, No Trespassing, Do Not Call). Printing ignores these filters.
+Two Views: Switch the open batch between Letter Writing (results in groups, no filters) and Door-to-Door (one flat list of cards with colored status pills, a sticky header, a Visited progress bar, and a collapsible Filters panel). The filters are street number (All/Odd/Even), street name (dropdown of streets in the batch), and status (All, Not Home [includes Busy], Visited, No Soliciting, No Trespassing, Do Not Call). Printing ignores these filters.
 
 Collapsible Input: The Property addresses box can be collapsed, and collapses automatically when a batch is fetched or opened.
 

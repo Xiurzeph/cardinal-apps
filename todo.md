@@ -24,6 +24,24 @@ Add the ability to switch back and forth between two views of the currently open
 - [x] Rename the status label to "⚠️ No Trespassing" (stored value unchanged).
 - [x] Make "Property addresses" collapsible, collapsed by default when a batch is opened or fetched.
 
+## Requirement 4: Visual improvements
+
+### Door-to-Door
+- [x] Collapse filters behind a "Filters" button with an active-count badge and a "Clear all" link.
+- [x] Sticky header with the view toggle, "N of M" count, and progress.
+- [x] Address rows as cards with a large address and a colored status pill (tap to change).
+- [x] Visited progress bar ("Visited 18 / 48"); status chips are colored and scroll horizontally.
+
+### Letter Writing
+- [x] Sticky, lighter group headers; completed groups show a check instead of fading the card.
+- [x] Replace the status summary bar with the shared progress bar (plus per-group visited dot/count).
+
+### General
+- [x] Consistent corner radius, spacing and 40px minimum tap targets.
+- [x] Empty state with icon and hint; skeleton rows while fetching.
+- [x] Distinct color for "Not Home 3".
+- [x] Print header with batch name, date and counts; group tag (G#) on every Door-to-Door card.
+
 ## Requirement 2: Include Do Not Knocks in batch fetch
 
 - [x] Currently, Do Not Knock addresses are filtered out on batch fetch. Stop filtering them out.
