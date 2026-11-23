@@ -537,12 +537,12 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
     }
 
     const isDoorView = viewMode === 'door';
-    const activeFilter = printAllResults || !isDoorView ? 'all' : streetNumberFilter;
+    const activeFilter = printAllResults ? 'all' : streetNumberFilter;
     const getStatus = item => addressStatuses.get(getAddressKey(item.full_address, item.city, item.zip)) || 'choose status';
-    const passesStatusFilter = item => printAllResults || !isDoorView || !statusFilter || statusFilter.has(getStatus(item));
+    const passesStatusFilter = item => printAllResults || !statusFilter || statusFilter.has(getStatus(item));
     const passesFilters = item => matchesStreetNumberFilter(item.full_address, activeFilter)
         && passesStatusFilter(item)
-        && (printAllResults || !isDoorView || streetNameFilter === 'all' || getStreetName(item.full_address) === streetNameFilter);
+        && (printAllResults || streetNameFilter === 'all' || getStreetName(item.full_address) === streetNameFilter);
     const streetNames = [...new Set(groups.flatMap(g => g.items).map(i => getStreetName(i.full_address)).filter(Boolean))]
         .sort((a, b) => a.localeCompare(b));
     if (streetNameFilter !== 'all' && !streetNames.includes(streetNameFilter)) streetNameFilter = 'all';
@@ -566,7 +566,7 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
             `).join('')}
         </div>
     `;
-    const filterButton = !isDoorView ? '' : `
+    const filterButton = `
         <div class="flex items-center gap-2">
             <span class="text-xs font-bold text-gray-500">${visibleProperties} of ${totalProperties}</span>
             <button type="button" onclick="window.toggleFilters()" aria-expanded="${filtersOpen}" class="flex min-h-10 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-all ${filtersOpen || activeFilterCount ? 'border-gray-800 bg-gray-800 text-white' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}">
@@ -585,7 +585,7 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
             <div class="h-2 overflow-hidden rounded-full bg-gray-200"><div class="h-full rounded-full bg-teal-500 transition-all" style="width:${visitedPct}%"></div></div>
         </div>
     `;
-    const filtersPanel = !(isDoorView && filtersOpen) ? '' : `
+    const filtersPanel = !filtersOpen ? '' : `
         <div class="space-y-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -730,13 +730,20 @@ window.renderResults = function(groups) { // Expose to window for handleCountyCh
         }
         return `<div class="space-y-2">${cards}</div>`;
     };
+    const renderNoMatches = () => `
+        <div class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-300 bg-white p-10 text-center">
+            <p class="font-bold text-gray-500">No properties match the current filters</p>
+            <button type="button" onclick="window.clearFilters()" class="min-h-10 rounded-lg bg-gray-800 px-4 text-xs font-bold text-white hover:bg-gray-900">Clear all filters</button>
+        </div>
+    `;
 
-    const html = isDoorView ? renderDoorList() : groups.map((group, gIdx) => {
+    const html = isDoorView ? renderDoorList() : visibleProperties === 0 ? renderNoMatches() : groups.map((group, gIdx) => {
         const isDone = group.completed;
-        const visibleItems = group.items;
-        const groupVisited = group.items.filter(item => getStatus(item) === 'visited').length;
-        const dotColor = isDone || groupVisited === group.items.length ? 'bg-emerald-500' : groupVisited > 0 ? 'bg-amber-400' : 'bg-gray-300';
-        const propertyCount = `${group.items.length} Properties`;
+        const visibleItems = group.items.filter(passesFilters);
+        if (visibleItems.length === 0) return '';
+        const groupVisited = visibleItems.filter(item => getStatus(item) === 'visited').length;
+        const dotColor = isDone || groupVisited === visibleItems.length ? 'bg-emerald-500' : groupVisited > 0 ? 'bg-amber-400' : 'bg-gray-300';
+        const propertyCount = `${visibleItems.length} Properties`;
         const itemsHtml = rowsFor(visibleItems, isDone);
 
         return `
