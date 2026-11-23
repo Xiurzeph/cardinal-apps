@@ -72,12 +72,15 @@ const ADDRESS_STATUSES = [
     'do not call'
 ];
 
-// Door-to-door Status filter buttons; "not home 1-3" is a single button covering all three statuses
-const STATUS_FILTER_OPTIONS = ADDRESS_STATUSES
-    .filter(s => !['choose status', 'home', 'letter', 'busy', 'not home 2', 'not home 3'].includes(s))
+// "Not home 1-3" is a single button covering all three statuses.
+const STATUS_FILTER_OPTIONS = [
+    { id: 'no status', label: 'No Status', statuses: ['choose status'] },
+    ...ADDRESS_STATUSES
+        .filter(s => !['choose status', 'home', 'letter', 'busy', 'not home 2', 'not home 3'].includes(s))
         .map(s => s === 'not home 1'
-        ? { id: 'not home', label: '🚪 Not Home', statuses: ['busy', 'not home 1', 'not home 2', 'not home 3'] }
-        : { id: s, label: getStatusStyle(s).indicator, statuses: [s] });
+            ? { id: 'not home', label: '🚪 Not Home', statuses: ['busy', 'not home 1', 'not home 2', 'not home 3'] }
+            : { id: s, label: getStatusStyle(s).indicator, statuses: [s] })
+];
 
 // Tailwind classes for the colored status filter chips (on / off)
 const STATUS_CHIP_STYLES = {
